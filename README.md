@@ -16,7 +16,7 @@
 
 ## Overview
 
-The OpenWebUI Auto Tool Selector Suite transforms your local AI models from passive chat interfaces into intelligent, autonomous assistants. Version 1.1 introduces enhanced debugging, flexible architecture, and improved accessibility for both vision and non-vision models.
+The OpenWebUI Agentic Tooling Suite transforms your local AI models from passive chat interfaces into intelligent, autonomous assistants. Version 1.1 introduces enhanced debugging, flexible architecture, and improved accessibility for both vision and non-vision models.
 
 ---
 
