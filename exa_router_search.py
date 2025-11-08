@@ -974,7 +974,7 @@ class ToolsInternal:
             try:
                 exa = self._exa_client()
                 search_data = await asyncio.to_thread(
-                    exa.search, query, num_results=num_results, use_autoprompt=True
+                    exa.search, query, num_results=num_results
                 )
                 results = search_data.results
 
