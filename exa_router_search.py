@@ -938,6 +938,7 @@ class ToolsInternal:
         self._cache_max_size = 100  # Limit cache size
         self._active_sessions: Dict[str, asyncio.Lock] = {}  # Session concurrency control
         self._session_lock = asyncio.Lock()  # Lock for managing session locks
+        self._last_error: Optional[str] = None  # Track the most recent error for user feedback
 
     def _exa_client(self) -> Exa:
         if self._exa is None:
@@ -991,8 +992,10 @@ class ToolsInternal:
                 self.debug.url_metrics(found=len(results))
                 return results
             except Exception as e:
+                error_msg = str(e)
+                self._last_error = error_msg  # Store for user-facing error messages
                 self.debug.error(
-                    f"Exa search failed for {debug_context}: {str(e)[:100]}..."
+                    f"Exa search failed for {debug_context}: {error_msg[:100]}..."
                 )
                 return []
 
@@ -1022,7 +1025,9 @@ class ToolsInternal:
                 
                 for item in results_list:
                     if isinstance(item, Exception):
-                        self.debug.error(f"Exa crawl chunk failed for {debug_context}: {str(item)[:100]}...")
+                        error_msg = str(item)
+                        self._last_error = error_msg  # Store for user-facing error messages
+                        self.debug.error(f"Exa crawl chunk failed for {debug_context}: {error_msg[:100]}...")
                         continue
                     # item.results is expected from Exa
                     combined.extend(item.results)
@@ -1048,7 +1053,9 @@ class ToolsInternal:
                 
                 return combined
             except Exception as e:
-                self.debug.error(f"Exa crawl failed for {debug_context}: {str(e)[:100]}...")
+                error_msg = str(e)
+                self._last_error = error_msg  # Store for user-facing error messages
+                self.debug.error(f"Exa crawl failed for {debug_context}: {error_msg[:100]}...")
                 self.debug.url_metrics(crawled=len(ids_or_urls), failed=len(ids_or_urls))
                 return []
 
@@ -1342,6 +1349,7 @@ class ToolsInternal:
 
         # Mode 1 - Crawl
         if decision == "CRAWL":
+            self._last_error = None  # Clear any previous errors
             urls = URL_RE.findall(last_user_message)
             if not urls:
                 return {
@@ -1408,6 +1416,7 @@ class ToolsInternal:
 
         # Mode 2 - Standard
         elif decision == "STANDARD":
+            self._last_error = None  # Clear any previous errors
             self.debug.flow("Starting STANDARD search mode")
             report = QuickDebugReport(
                 initial_query=last_user_message,
@@ -1463,7 +1472,10 @@ class ToolsInternal:
                 )
 
                 if not search_results:
-                    final_result = "My search found no results to read. Please try a different query."
+                    if self._last_error:
+                        final_result = f"Search failed with error: {self._last_error}"
+                    else:
+                        final_result = "My search found no results to read. Please try a different query."
                     self.debug.search("No search results found")
                 else:
                     report.urls_found = [res.url for res in search_results]
@@ -1474,7 +1486,10 @@ class ToolsInternal:
                     ]
 
                     if not crawl_candidates:
-                        final_result = "My search found no results to read. Please try a different query."
+                        if self._last_error:
+                            final_result = f"Search succeeded but failed to retrieve content: {self._last_error}"
+                        else:
+                            final_result = "My search found no results to read. Please try a different query."
                         self.debug.search("No crawl candidates found")
                     else:
                         domains = [
@@ -1558,7 +1573,10 @@ class ToolsInternal:
                             await _status("Standard search complete.", done=True)
                             self.debug.synthesis("STANDARD search synthesis complete")
                         else:
-                            final_result = "I found search results but was unable to read any content from them. Please try a different query."
+                            if self._last_error:
+                                final_result = f"I found search results but failed to read content: {self._last_error}"
+                            else:
+                                final_result = "I found search results but was unable to read any content from them. Please try a different query."
 
             except Exception as e:
                 self.debug.error(f"STANDARD search path failed with an exception: {e}")
@@ -1591,6 +1609,7 @@ class ToolsInternal:
         self, user_query: str, convo_snippet: str, status_func, request, user_obj, show_sources: bool
     ) -> dict:
         """New iterative complete search system based on user's vision"""
+        self._last_error = None  # Clear any previous errors
         self.debug.flow("Starting NEW iterative complete search mode")
         
         try:
