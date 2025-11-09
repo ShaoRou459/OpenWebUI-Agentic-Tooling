@@ -2173,6 +2173,12 @@ class Tools:
             description="Use full Jupyter notebook environment (True) or basic Python execution (False)"
         )
 
+        # ─── Master Tool Debugging ───
+        master_debug: bool = Field(
+            default=False,
+            description="Enable comprehensive debug logging for ALL tool calls (web_search, code_interpreter, image_generation) - prints to Docker logs"
+        )
+
         # ─── Image Generation Configuration ───
         image_gen_model: str = Field(
             default="gpt-4o-image",
@@ -2182,6 +2188,7 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
         self._web_search: Optional[ToolsInternal] = None
+        self.debug = Debug(enabled=False, tool_name="AgenticMasterTool")  # Will be updated from valves
 
     def _get_web_search(self) -> ToolsInternal:
         """Initialize and configure the web search tool."""
@@ -2201,9 +2208,9 @@ class Tools:
             self._web_search.valves.complete_queries_to_generate = self.valves.web_search_complete_queries_per_iteration
             self._web_search.valves.complete_max_search_iterations = self.valves.web_search_complete_max_iterations
             self._web_search.valves.show_sources = self.valves.web_search_show_sources
-            self._web_search.valves.debug_enabled = self.valves.web_search_debug
-            # Update debug instance
-            self._web_search.debug = Debug(enabled=self.valves.web_search_debug)
+            self._web_search.valves.debug_enabled = self.valves.web_search_debug or self.valves.master_debug  # Enable if either is true
+            # Update debug instance - use web_search_debug OR master_debug
+            self._web_search.debug = Debug(enabled=(self.valves.web_search_debug or self.valves.master_debug))
         return self._web_search
 
     async def web_search(
@@ -2238,6 +2245,21 @@ class Tools:
             await web_search(query="https://example.com/article", mode="CRAWL")
             await web_search(query="comprehensive analysis of quantum computing", mode="COMPLETE")
         """
+        # Update master debug state
+        self.debug.enabled = self.valves.master_debug
+        
+        # Log tool invocation
+        if self.debug.enabled:
+            self.debug.flow("=" * 80)
+            self.debug.flow("WEB_SEARCH TOOL INVOKED")
+            self.debug.flow("=" * 80)
+            self.debug.data("Input - query", query[:200] if len(query) > 200 else query)
+            self.debug.data("Input - mode", mode)
+            self.debug.data("Input - user_id", __user__.get("id") if __user__ else "None")
+            self.debug.data("Input - message_count", len(__messages__) if __messages__ else 0)
+            if __messages__:
+                self.debug.data("Input - last_message", str(__messages__[-1])[:200] if __messages__ else "None")
+        
         search_tool = self._get_web_search()
 
         # Construct messages for the search tool
@@ -2263,7 +2285,19 @@ class Tools:
             __messages__=messages
         )
 
-        return result.get("content", "No results found.")
+        final_result = result.get("content", "No results found.")
+        
+        # Log output
+        if self.debug.enabled:
+            self.debug.data("Output - result_type", type(result))
+            self.debug.data("Output - result_keys", list(result.keys()) if isinstance(result, dict) else "Not a dict")
+            self.debug.data("Output - content_length", len(final_result))
+            self.debug.data("Output - content_preview", final_result[:300] if len(final_result) > 300 else final_result)
+            self.debug.flow("=" * 80)
+            self.debug.flow("WEB_SEARCH TOOL COMPLETED")
+            self.debug.flow("=" * 80)
+        
+        return final_result
 
     async def code_interpreter(
         self,
@@ -2298,7 +2332,24 @@ class Tools:
             plt.savefig('plot.png')
             </code_interpreter>
         """
+        # Update master debug state
+        self.debug.enabled = self.valves.master_debug
+        
+        # Log tool invocation
+        if self.debug.enabled:
+            self.debug.flow("=" * 80)
+            self.debug.flow("CODE_INTERPRETER TOOL INVOKED")
+            self.debug.flow("=" * 80)
+            self.debug.data("Input - enable", enable)
+            self.debug.data("Input - use_jupyter", use_jupyter)
+            self.debug.data("Input - valve_default_jupyter", self.valves.code_interpreter_use_jupyter)
+        
         if not enable:
+            if self.debug.enabled:
+                self.debug.data("Output - status", "disabled")
+                self.debug.flow("=" * 80)
+                self.debug.flow("CODE_INTERPRETER TOOL COMPLETED")
+                self.debug.flow("=" * 80)
             return "Code interpreter disabled for this conversation."
 
         # Use valve setting if not specified
@@ -2331,7 +2382,17 @@ class Tools:
             )
 
         interpreter_type = "Jupyter notebook" if use_jupyter else "basic Python"
-        return f"✓ Code interpreter enabled ({interpreter_type}). You can now execute Python code using <code_interpreter> tags."
+        result = f"✓ Code interpreter enabled ({interpreter_type}). You can now execute Python code using <code_interpreter> tags."
+        
+        # Log output
+        if self.debug.enabled:
+            self.debug.data("Output - interpreter_type", interpreter_type)
+            self.debug.data("Output - message", result)
+            self.debug.flow("=" * 80)
+            self.debug.flow("CODE_INTERPRETER TOOL COMPLETED")
+            self.debug.flow("=" * 80)
+        
+        return result
 
     async def image_generation(
         self,
@@ -2360,6 +2421,19 @@ class Tools:
                 description="Mountain sunset"
             )
         """
+        # Update master debug state
+        self.debug.enabled = self.valves.master_debug
+        
+        # Log tool invocation
+        if self.debug.enabled:
+            self.debug.flow("=" * 80)
+            self.debug.flow("IMAGE_GENERATION TOOL INVOKED")
+            self.debug.flow("=" * 80)
+            self.debug.data("Input - prompt", prompt[:200] if len(prompt) > 200 else prompt)
+            self.debug.data("Input - description", description)
+            self.debug.data("Input - model", self.valves.image_gen_model)
+            self.debug.data("Input - user_id", __user__.get("id") if __user__ else "None")
+        
         if description is None:
             # Generate a short description from the prompt
             description = prompt[:50] + ("..." if len(prompt) > 50 else "")
@@ -2404,7 +2478,18 @@ class Tools:
                 )
 
             # Return markdown-formatted image
-            return f"![{description}]({image_url})\n\n*{description}*"
+            result = f"![{description}]({image_url})\n\n*{description}*"
+            
+            # Log successful output
+            if self.debug.enabled:
+                self.debug.data("Output - image_url", image_url)
+                self.debug.data("Output - description", description)
+                self.debug.data("Output - markdown_length", len(result))
+                self.debug.flow("=" * 80)
+                self.debug.flow("IMAGE_GENERATION TOOL COMPLETED SUCCESSFULLY")
+                self.debug.flow("=" * 80)
+            
+            return result
 
         except Exception as e:
             if __event_emitter__:
@@ -2414,7 +2499,17 @@ class Tools:
                         "data": {"description": f"❌ Failed: {e}", "done": True},
                     }
                 )
-            return f"❌ Image generation failed: {str(e)}"
+            error_msg = f"❌ Image generation failed: {str(e)}"
+            
+            # Log failure
+            if self.debug.enabled:
+                self.debug.error(f"Image generation failed: {str(e)}")
+                self.debug.data("Output - error", error_msg)
+                self.debug.flow("=" * 80)
+                self.debug.flow("IMAGE_GENERATION TOOL COMPLETED WITH ERROR")
+                self.debug.flow("=" * 80)
+            
+            return error_msg
 
 
 # For backward compatibility, export the main class
