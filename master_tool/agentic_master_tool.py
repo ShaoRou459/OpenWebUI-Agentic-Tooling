@@ -2378,19 +2378,19 @@ class Tools:
 
         Args:
             enable: Whether to enable code interpreter (default: True)
-            use_jupyter: Use Jupyter notebook environment (True) or basic Python (False).
-                        If None, uses the valve setting.
+            use_jupyter: DEPRECATED - This parameter is ignored. The interpreter type is
+                        controlled by the 'code_interpreter_use_jupyter' valve setting.
             __event_emitter__: OpenWebUI event emitter for status updates
 
         Returns:
             Status message
 
         Examples:
-            await code_interpreter(enable=True, use_jupyter=True)
-            await code_interpreter(enable=True, use_jupyter=False)
+            await code_interpreter(enable=True)
 
         Note:
-            After calling this, the model can use <code_interpreter> tags in its response:
+            - The interpreter type (Jupyter vs basic Python) is controlled by the valve setting
+            - After calling this, the model can use <code_interpreter> tags in its response:
             <code_interpreter type="code" lang="python">
             import matplotlib.pyplot as plt
             plt.plot([1, 2, 3, 4])
@@ -2418,7 +2418,7 @@ class Tools:
             # LLM parameters
             print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 LLM-PROVIDED PARAMETERS:{self.debug._COLORS['RESET']}", file=sys.stderr)
             print(f"{self.debug._COLORS['CYAN']}   enable (bool):{self.debug._COLORS['RESET']} {repr(enable)}", file=sys.stderr)
-            print(f"{self.debug._COLORS['CYAN']}   use_jupyter (bool|None):{self.debug._COLORS['RESET']} {repr(use_jupyter)}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   use_jupyter (bool|None):{self.debug._COLORS['RESET']} {repr(use_jupyter)} {self.debug._COLORS['YELLOW']}[IGNORED - valve setting used]{self.debug._COLORS['RESET']}", file=sys.stderr)
 
             # OpenWebUI context
             print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🔧 OPENWEBUI CONTEXT:{self.debug._COLORS['RESET']}", file=sys.stderr)
@@ -2426,7 +2426,7 @@ class Tools:
 
             # Valve configuration
             print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}⚙️  ACTIVE VALVE CONFIGURATION:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['DIM']}   code_interpreter_use_jupyter:{self.debug._COLORS['RESET']} {self.valves.code_interpreter_use_jupyter}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   code_interpreter_use_jupyter:{self.debug._COLORS['RESET']} {self.valves.code_interpreter_use_jupyter} {self.debug._COLORS['GREEN']}[WILL BE USED]{self.debug._COLORS['RESET']}", file=sys.stderr)
 
         if not enable:
             _tool_end_time = time.perf_counter()
@@ -2445,9 +2445,8 @@ class Tools:
 
             return "Code interpreter disabled for this conversation."
 
-        # Use valve setting if not specified
-        if use_jupyter is None:
-            use_jupyter = self.valves.code_interpreter_use_jupyter
+        # Always use valve setting (valve takes precedence over LLM parameter)
+        use_jupyter = self.valves.code_interpreter_use_jupyter
 
         if __event_emitter__:
             await __event_emitter__(
