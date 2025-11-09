@@ -2248,17 +2248,53 @@ class Tools:
         # Update master debug state
         self.debug.enabled = self.valves.master_debug
         
-        # Log tool invocation
+        # Start timing
+        _tool_start_time = time.perf_counter()
+        
+        # Log comprehensive tool invocation
         if self.debug.enabled:
-            self.debug.flow("=" * 80)
-            self.debug.flow("WEB_SEARCH TOOL INVOKED")
-            self.debug.flow("=" * 80)
-            self.debug.data("Input - query", query[:200] if len(query) > 200 else query)
-            self.debug.data("Input - mode", mode)
-            self.debug.data("Input - user_id", __user__.get("id") if __user__ else "None")
-            self.debug.data("Input - message_count", len(__messages__) if __messages__ else 0)
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🔍 WEB_SEARCH TOOL INVOKED BY LLM{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            
+            # Tool call details
+            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}📋 TOOL CALL DETAILS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Method: web_search(){self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Class: Tools (AgenticMasterTool){self.debug._COLORS['RESET']}", file=sys.stderr)
+            
+            # LLM parameters - what the model actually passed
+            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 LLM-PROVIDED PARAMETERS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   query (str):{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"      {repr(query[:200])}{'...' if len(query) > 200 else ''}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   mode (str):{self.debug._COLORS['RESET']} {repr(mode)}", file=sys.stderr)
+            
+            # OpenWebUI context parameters
+            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🔧 OPENWEBUI CONTEXT:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __event_emitter__:{self.debug._COLORS['RESET']} {type(__event_emitter__)}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __user__:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            if __user__:
+                for key, value in __user__.items():
+                    print(f"      {key}: {repr(str(value)[:100])}", file=sys.stderr)
+            else:
+                print(f"      None", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __request__:{self.debug._COLORS['RESET']} {type(__request__)}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __messages__:{self.debug._COLORS['RESET']}", file=sys.stderr)
             if __messages__:
-                self.debug.data("Input - last_message", str(__messages__[-1])[:200] if __messages__ else "None")
+                print(f"      Count: {len(__messages__)}", file=sys.stderr)
+                print(f"      Last message role: {__messages__[-1].get('role', 'unknown')}", file=sys.stderr)
+                last_content = str(__messages__[-1].get('content', ''))[:200]
+                print(f"      Last message content: {repr(last_content)}{'...' if len(str(__messages__[-1].get('content', ''))) > 200 else ''}", file=sys.stderr)
+            else:
+                print(f"      None", file=sys.stderr)
+            
+            # Valve configuration being used
+            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}⚙️  ACTIVE VALVE CONFIGURATION:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   exa_api_key:{self.debug._COLORS['RESET']} {'SET' if self.valves.exa_api_key else 'NOT SET'}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   web_search_router_model:{self.debug._COLORS['RESET']} {self.valves.web_search_router_model}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   web_search_quick_model:{self.debug._COLORS['RESET']} {self.valves.web_search_quick_model}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   web_search_quick_urls:{self.debug._COLORS['RESET']} {self.valves.web_search_quick_urls}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   web_search_debug:{self.debug._COLORS['RESET']} {self.valves.web_search_debug}", file=sys.stderr)
         
         search_tool = self._get_web_search()
 
@@ -2286,17 +2322,46 @@ class Tools:
         )
 
         final_result = result.get("content", "No results found.")
-        
-        # Log output
+
+        # Calculate execution time
+        _tool_end_time = time.perf_counter()
+        _execution_time = _tool_end_time - _tool_start_time
+
+        # Log comprehensive output
         if self.debug.enabled:
-            self.debug.data("Output - result_type", type(result))
-            self.debug.data("Output - result_keys", list(result.keys()) if isinstance(result, dict) else "Not a dict")
-            self.debug.data("Output - content_length", len(final_result))
-            self.debug.data("Output - content_preview", final_result[:300] if len(final_result) > 300 else final_result)
-            self.debug.flow("=" * 80)
-            self.debug.flow("WEB_SEARCH TOOL COMPLETED")
-            self.debug.flow("=" * 80)
-        
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}✅ WEB_SEARCH TOOL OUTPUT{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Result structure
+            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}📦 RESULT STRUCTURE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Type: {type(result)}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            if isinstance(result, dict):
+                print(f"{self.debug._COLORS['WHITE']}   Keys: {list(result.keys())}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Content analysis
+            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}📄 CONTENT ANALYSIS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   Content Length:{self.debug._COLORS['RESET']} {len(final_result)} characters", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   Content Type:{self.debug._COLORS['RESET']} {type(final_result)}", file=sys.stderr)
+
+            # Success/failure indicator
+            is_error = final_result.startswith("Search failed") or final_result == "No results found."
+            status_color = self.debug._COLORS['RED'] if is_error else self.debug._COLORS['GREEN']
+            status_icon = "❌" if is_error else "✓"
+            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{status_color}   {status_icon} {'FAILED' if is_error else 'SUCCESS'}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Content preview
+            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}👁️  CONTENT PREVIEW:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            preview_length = 400
+            preview = final_result[:preview_length]
+            print(f"{self.debug._COLORS['DIM']}{preview}{'...' if len(final_result) > preview_length else ''}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🏁 WEB_SEARCH TOOL COMPLETED{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
+
         return final_result
 
     async def code_interpreter(
@@ -2334,22 +2399,50 @@ class Tools:
         """
         # Update master debug state
         self.debug.enabled = self.valves.master_debug
-        
-        # Log tool invocation
+
+        # Start timing
+        _tool_start_time = time.perf_counter()
+
+        # Log comprehensive tool invocation
         if self.debug.enabled:
-            self.debug.flow("=" * 80)
-            self.debug.flow("CODE_INTERPRETER TOOL INVOKED")
-            self.debug.flow("=" * 80)
-            self.debug.data("Input - enable", enable)
-            self.debug.data("Input - use_jupyter", use_jupyter)
-            self.debug.data("Input - valve_default_jupyter", self.valves.code_interpreter_use_jupyter)
-        
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}💻 CODE_INTERPRETER TOOL INVOKED BY LLM{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Tool call details
+            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}📋 TOOL CALL DETAILS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Method: code_interpreter(){self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Class: Tools (AgenticMasterTool){self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # LLM parameters
+            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 LLM-PROVIDED PARAMETERS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   enable (bool):{self.debug._COLORS['RESET']} {repr(enable)}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   use_jupyter (bool|None):{self.debug._COLORS['RESET']} {repr(use_jupyter)}", file=sys.stderr)
+
+            # OpenWebUI context
+            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🔧 OPENWEBUI CONTEXT:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __event_emitter__:{self.debug._COLORS['RESET']} {type(__event_emitter__)}", file=sys.stderr)
+
+            # Valve configuration
+            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}⚙️  ACTIVE VALVE CONFIGURATION:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   code_interpreter_use_jupyter:{self.debug._COLORS['RESET']} {self.valves.code_interpreter_use_jupyter}", file=sys.stderr)
+
         if not enable:
+            _tool_end_time = time.perf_counter()
+            _execution_time = _tool_end_time - _tool_start_time
+
             if self.debug.enabled:
-                self.debug.data("Output - status", "disabled")
-                self.debug.flow("=" * 80)
-                self.debug.flow("CODE_INTERPRETER TOOL COMPLETED")
-                self.debug.flow("=" * 80)
+                print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}✅ CODE_INTERPRETER TOOL OUTPUT{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['YELLOW']}   ⚠️  DISABLED BY LLM{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🏁 CODE_INTERPRETER TOOL COMPLETED{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
+
             return "Code interpreter disabled for this conversation."
 
         # Use valve setting if not specified
@@ -2383,15 +2476,40 @@ class Tools:
 
         interpreter_type = "Jupyter notebook" if use_jupyter else "basic Python"
         result = f"✓ Code interpreter enabled ({interpreter_type}). You can now execute Python code using <code_interpreter> tags."
-        
-        # Log output
+
+        # Calculate execution time
+        _tool_end_time = time.perf_counter()
+        _execution_time = _tool_end_time - _tool_start_time
+
+        # Log comprehensive output
         if self.debug.enabled:
-            self.debug.data("Output - interpreter_type", interpreter_type)
-            self.debug.data("Output - message", result)
-            self.debug.flow("=" * 80)
-            self.debug.flow("CODE_INTERPRETER TOOL COMPLETED")
-            self.debug.flow("=" * 80)
-        
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}✅ CODE_INTERPRETER TOOL OUTPUT{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Configuration used
+            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}⚙️  CONFIGURATION APPLIED:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Interpreter Type: {interpreter_type}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Using Jupyter: {use_jupyter}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Prompt injected
+            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}💉 INJECTED PROMPT:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            prompt_preview = prompt[:200] if use_jupyter else prompt[:150]
+            print(f"{self.debug._COLORS['DIM']}   {prompt_preview}...{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Status
+            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}   ✓ ENABLED SUCCESSFULLY{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Return message
+            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}📤 RETURN MESSAGE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   {result}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🏁 CODE_INTERPRETER TOOL COMPLETED{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
+
         return result
 
     async def image_generation(
@@ -2423,17 +2541,43 @@ class Tools:
         """
         # Update master debug state
         self.debug.enabled = self.valves.master_debug
-        
-        # Log tool invocation
+
+        # Start timing
+        _tool_start_time = time.perf_counter()
+
+        # Log comprehensive tool invocation
         if self.debug.enabled:
-            self.debug.flow("=" * 80)
-            self.debug.flow("IMAGE_GENERATION TOOL INVOKED")
-            self.debug.flow("=" * 80)
-            self.debug.data("Input - prompt", prompt[:200] if len(prompt) > 200 else prompt)
-            self.debug.data("Input - description", description)
-            self.debug.data("Input - model", self.valves.image_gen_model)
-            self.debug.data("Input - user_id", __user__.get("id") if __user__ else "None")
-        
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🎨 IMAGE_GENERATION TOOL INVOKED BY LLM{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Tool call details
+            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}📋 TOOL CALL DETAILS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Method: image_generation(){self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Class: Tools (AgenticMasterTool){self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # LLM parameters
+            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 LLM-PROVIDED PARAMETERS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   prompt (str):{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"      {repr(prompt[:300])}{'...' if len(prompt) > 300 else ''}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   description (str|None):{self.debug._COLORS['RESET']} {repr(description)}", file=sys.stderr)
+
+            # OpenWebUI context
+            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🔧 OPENWEBUI CONTEXT:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __event_emitter__:{self.debug._COLORS['RESET']} {type(__event_emitter__)}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __user__:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            if __user__:
+                for key, value in __user__.items():
+                    print(f"      {key}: {repr(str(value)[:100])}", file=sys.stderr)
+            else:
+                print(f"      None", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __request__:{self.debug._COLORS['RESET']} {type(__request__)}", file=sys.stderr)
+
+            # Valve configuration
+            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}⚙️  ACTIVE VALVE CONFIGURATION:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   image_gen_model:{self.debug._COLORS['RESET']} {self.valves.image_gen_model}", file=sys.stderr)
+
         if description is None:
             # Generate a short description from the prompt
             description = prompt[:50] + ("..." if len(prompt) > 50 else "")
@@ -2479,16 +2623,46 @@ class Tools:
 
             # Return markdown-formatted image
             result = f"![{description}]({image_url})\n\n*{description}*"
-            
-            # Log successful output
+
+            # Calculate execution time
+            _tool_end_time = time.perf_counter()
+            _execution_time = _tool_end_time - _tool_start_time
+
+            # Log comprehensive successful output
             if self.debug.enabled:
-                self.debug.data("Output - image_url", image_url)
-                self.debug.data("Output - description", description)
-                self.debug.data("Output - markdown_length", len(result))
-                self.debug.flow("=" * 80)
-                self.debug.flow("IMAGE_GENERATION TOOL COMPLETED SUCCESSFULLY")
-                self.debug.flow("=" * 80)
-            
+                print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}✅ IMAGE_GENERATION TOOL OUTPUT{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Generated image details
+                print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}🖼️  GENERATED IMAGE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Image URL:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"      {image_url}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Description:{self.debug._COLORS['RESET']} {repr(description)}", file=sys.stderr)
+
+                # Model used
+                print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 MODEL USED:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['WHITE']}   {self.valves.image_gen_model}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Response analysis
+                print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}📊 RESPONSE ANALYSIS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Raw Response Length:{self.debug._COLORS['RESET']} {len(image_reply)} characters", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Markdown Output Length:{self.debug._COLORS['RESET']} {len(result)} characters", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   URL Valid:{self.debug._COLORS['RESET']} {url_match is not None}", file=sys.stderr)
+
+                # Status
+                print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}   ✓ SUCCESS{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Return markdown preview
+                print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}📤 RETURN MARKDOWN:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['DIM']}   {result}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🏁 IMAGE_GENERATION TOOL COMPLETED{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
+
             return result
 
         except Exception as e:
@@ -2500,15 +2674,42 @@ class Tools:
                     }
                 )
             error_msg = f"❌ Image generation failed: {str(e)}"
-            
-            # Log failure
+
+            # Calculate execution time
+            _tool_end_time = time.perf_counter()
+            _execution_time = _tool_end_time - _tool_start_time
+
+            # Log comprehensive error output
             if self.debug.enabled:
-                self.debug.error(f"Image generation failed: {str(e)}")
-                self.debug.data("Output - error", error_msg)
-                self.debug.flow("=" * 80)
-                self.debug.flow("IMAGE_GENERATION TOOL COMPLETED WITH ERROR")
-                self.debug.flow("=" * 80)
-            
+                print(f"\n{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}❌ IMAGE_GENERATION TOOL OUTPUT (ERROR){self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Error details
+                print(f"\n{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}⚠️  ERROR DETAILS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['YELLOW']}   Exception Type:{self.debug._COLORS['RESET']} {type(e).__name__}", file=sys.stderr)
+                print(f"{self.debug._COLORS['YELLOW']}   Exception Message:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"      {str(e)}", file=sys.stderr)
+
+                # Context at failure
+                print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}📋 CONTEXT AT FAILURE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Prompt (first 200 chars):{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"      {repr(prompt[:200])}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Model:{self.debug._COLORS['RESET']} {self.valves.image_gen_model}", file=sys.stderr)
+
+                # Status
+                print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}   ❌ FAILED{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Error message returned to user
+                print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}📤 RETURN MESSAGE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['DIM']}   {error_msg}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                print(f"\n{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}🏁 IMAGE_GENERATION TOOL COMPLETED WITH ERROR{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
+
             return error_msg
 
 
