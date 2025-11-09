@@ -1,6 +1,6 @@
 # OpenWebUI Agentic Tooling Suite
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/ShaoRou459/OpenwebUI-Tooling-Setup/releases)
+[![Version](https://img.shields.io/badge/version-1.2.6-blue.svg)](https://github.com/ShaoRou459/OpenwebUI-Tooling-Setup/releases)
 [![Python](https://img.shields.io/badge/python-3.8+-green.svg)](https://python.org)
 [![OpenWebUI](https://img.shields.io/badge/OpenWebUI-compatible-orange.svg)](https://openwebui.com)
 [![License](https://img.shields.io/badge/license-GPL-red.svg)](LICENSE)
