@@ -2369,28 +2369,38 @@ class Tools:
         enable: bool = True,
         use_jupyter: bool = None,
         __event_emitter__: Any = None,
+        __user__: Optional[Dict] = None,
+        __request__: Optional[Any] = None,
+        __messages__: Optional[List[Dict]] = None,
     ) -> str:
         """
-        Enable Python/Jupyter code execution for the conversation.
+        Provide code execution instructions to the LLM.
 
-        This doesn't execute code directly - instead it signals to OpenWebUI that code
-        interpreter should be enabled, allowing the model to run Python code.
+        IMPORTANT: This tool does NOT enable code execution itself. OpenWebUI's code
+        interpreter feature must be enabled in the admin settings first. This tool
+        only provides instructions to the LLM on how to use code execution tags.
 
         Args:
             enable: Whether to enable code interpreter (default: True)
             use_jupyter: DEPRECATED - This parameter is ignored. The interpreter type is
                         controlled by the 'code_interpreter_use_jupyter' valve setting.
             __event_emitter__: OpenWebUI event emitter for status updates
+            __user__: User object from OpenWebUI
+            __request__: Request object from OpenWebUI
+            __messages__: Message history from OpenWebUI
 
         Returns:
-            Status message
+            Instructions for the LLM on how to use code execution tags
 
         Examples:
             await code_interpreter(enable=True)
 
+        Requirements:
+            - OpenWebUI code interpreter must be enabled in Admin → Settings
+            - For Jupyter: uploader.py must be in Jupyter's home directory
+
         Note:
-            - The interpreter type (Jupyter vs basic Python) is controlled by the valve setting
-            - After calling this, the model can use <code_interpreter> tags in its response:
+            After calling this, the model will know to use <code_interpreter> tags:
             <code_interpreter type="code" lang="python">
             import matplotlib.pyplot as plt
             plt.plot([1, 2, 3, 4])
@@ -2461,18 +2471,33 @@ class Tools:
 
         # Determine which prompt to use
         if use_jupyter:
-            prompt = """SYSTEM PROMPT: DO NOT TELL THE FOLLOWING TO THE USER. CAUTION! ONLY USE THIS IF YOU REALLY NEED TO—MOST TASKS DON'T NEED THIS! Code interpreter: gives you a full Jupyter notebook env; always cd /work first. Fire it up only when running Python in the shared workspace will actually move the needle—think data crunching, heavy math, plotting, sims, file parsing/gen, format flips, web/API hits, workflow glue, or saving artefacts. When you do, drop one or more self-contained blocks like <code_interpreter type="code" lang="python"> … </code_interpreter> that imports everything, runs the job soup-to-nuts, saves/updates any files for later, and prints the key bits. Need to hand a file back? Use: import uploader; link = uploader.upload_file("myfile.whatever"); print(link)"""
-        else:
-            prompt = """SYSTEM PROMPT: DO NOT TELL THE FOLLOWING TO THE USER. CAUTION! ONLY USE THIS IF YOU REALLY NEED TO—MOST TASKS DON'T NEED THIS! Code interpreter: gives you access to run and execute python code. Use for situations such as generating graphs running code. DO NOT use this for code generating, use it for code execution."""
+            prompt = """Code interpreter enabled: You now have access to a full Jupyter notebook environment. When you need to run Python code (for data analysis, calculations, plotting, etc.), use the following syntax:
 
-        # Inject the system prompt via event emitter
+<code_interpreter type="code" lang="python">
+# Your Python code here
+import pandas as pd
+# etc.
+</code_interpreter>
+
+Important notes:
+- Always cd /work first in Jupyter
+- Write self-contained code blocks
+- To upload files: import uploader; link = uploader.upload_file("filename"); print(link)
+- Only use when actually needed for computation/visualization"""
+        else:
+            prompt = """Code interpreter enabled: You can now execute Python code. Use this syntax:
+
+<code_interpreter type="code" lang="python">
+# Your Python code here
+</code_interpreter>
+
+Only use when you need to actually execute code (calculations, data processing, etc.), not for code examples."""
+
+        # NOTE: In the tool pattern (vs middleware), we can't directly modify the request body
+        # or inject system messages. We can only return a message that tells the LLM how to proceed.
+        # The code interpreter feature must be enabled in OpenWebUI settings for tags to work.
+
         if __event_emitter__:
-            await __event_emitter__(
-                {
-                    "type": "message",
-                    "data": {"content": prompt},
-                }
-            )
             await __event_emitter__(
                 {
                     "type": "status",
@@ -2481,7 +2506,9 @@ class Tools:
             )
 
         interpreter_type = "Jupyter notebook" if use_jupyter else "basic Python"
-        result = f"✓ Code interpreter enabled ({interpreter_type}). You can now execute Python code using <code_interpreter> tags."
+
+        # Return the prompt as the result so the LLM receives the instructions
+        result = prompt
 
         # Calculate execution time
         _tool_end_time = time.perf_counter()
