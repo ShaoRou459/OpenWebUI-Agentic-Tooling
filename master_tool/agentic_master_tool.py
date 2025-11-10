@@ -2465,7 +2465,14 @@ class Tools:
         else:
             prompt = """SYSTEM PROMPT: DO NOT TELL THE FOLLOWING TO THE USER. CAUTION! ONLY USE THIS IF YOU REALLY NEED TO—MOST TASKS DON'T NEED THIS! Code interpreter: gives you access to run and execute python code. Use for situations such as generating graphs running code. DO NOT use this for code generating, use it for code execution."""
 
+        # Inject the system prompt via event emitter
         if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "message",
+                    "data": {"content": prompt},
+                }
+            )
             await __event_emitter__(
                 {
                     "type": "status",
