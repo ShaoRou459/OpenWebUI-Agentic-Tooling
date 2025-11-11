@@ -1,12 +1,24 @@
 """
-Title: Search Router Tool
-Description: An advanced research tool with a robust retry and graceful failure mechanism.
-author: ShaoRou459
-author_url: https://github.com/ShaoRou459
-Version: 1.2.5
+Title: Agentic Master Tool
+Description: A unified master tool exposing web search and image generation as directly-callable functions for agentic models.
+Author: ShaoRou459
+Author URL: https://github.com/ShaoRou459
+Version: 2.1.0
+
+This is a fully self-contained tool that embeds all functionality in a single file.
+No external dependencies on other tool files - everything is included here.
+
+Available Tools:
+1. web_search - Search the web with configurable depth (CRAWL/STANDARD/COMPLETE)
+2. image_generation - Generate images using AI models
+
+Note: Code interpreter is NOT included as tools cannot set the required feature flags.
+      Enable code interpreter globally in OpenWebUI Admin → Settings instead.
+
 Requirements: exa_py, open_webui
 """
 
+# Import statement modification: we'll reuse the exa_router_search imports
 from __future__ import annotations
 
 import os
@@ -15,10 +27,12 @@ import sys
 import json
 import asyncio
 import time
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from urllib.parse import urlparse
+from contextlib import contextmanager
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -28,12 +42,16 @@ from open_webui.utils.misc import get_last_user_message
 
 try:
     from exa_py import Exa
-
     EXA_AVAILABLE = True
 except ImportError:
     Exa = None
     EXA_AVAILABLE = False
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EMBEDDED EXA SEARCH FUNCTIONALITY  
+# ═══════════════════════════════════════════════════════════════════════════
+# The entire exa_router_search.py is embedded below for self-containment
 
 # ─── System Prompts ───────────────────────────────────────────────────────────
 
@@ -2079,9 +2097,469 @@ class Tools:
         debug.flow("routed_search function called")
         debug.data("Query", query[:50] + "..." if len(query) > 50 else query)
 
-        # Sync valve settings to internal instance
-        self.tools_instance.valves = self.valves
 
-        return await self.tools_instance.routed_search(
-            query, __event_emitter__, __request__, __user__, __messages__
+# ═══════════════════════════════════════════════════════════════════════════
+# MASTER TOOL WRAPPER - Exposes all tools as directly-callable methods
+# ═══════════════════════════════════════════════════════════════════════════
+
+class Tools:
+    """
+    Agentic Master Tool - Exposes all capabilities as directly-callable functions.
+    
+    The model can call these tools directly with specific parameters instead of
+    relying on automatic routing middleware.
+    """
+
+    class Valves(BaseModel):
+        # ─── Web Search Configuration ───
+        exa_api_key: str = Field(
+            default="",
+            description="Your Exa API key for web search functionality"
         )
+        web_search_router_model: str = Field(
+            default="gpt-4o-mini",
+            description="LLM model for search strategy decisions (CRAWL/STANDARD/COMPLETE)"
+        )
+        web_search_quick_model: str = Field(
+            default="gpt-4o-mini",
+            description="LLM model for STANDARD search refinement and synthesis"
+        )
+        web_search_complete_agent_model: str = Field(
+            default="gpt-4-turbo",
+            description="LLM model for COMPLETE search agentic reasoning"
+        )
+        web_search_complete_summarizer_model: str = Field(
+            default="gpt-4-turbo",
+            description="LLM model for COMPLETE search final synthesis"
+        )
+        web_search_quick_urls: int = Field(
+            default=5,
+            description="Number of URLs to fetch in STANDARD mode"
+        )
+        web_search_quick_crawl: int = Field(
+            default=3,
+            description="Number of URLs to crawl in STANDARD mode"
+        )
+        web_search_quick_max_chars: int = Field(
+            default=8000,
+            description="Max context characters for STANDARD mode"
+        )
+        web_search_complete_urls_per_query: int = Field(
+            default=5,
+            description="URLs per query in COMPLETE mode"
+        )
+        web_search_complete_crawl_per_query: int = Field(
+            default=3,
+            description="URLs to crawl per query in COMPLETE mode"
+        )
+        web_search_complete_queries_per_iteration: int = Field(
+            default=3,
+            description="Queries to generate per iteration in COMPLETE mode"
+        )
+        web_search_complete_max_iterations: int = Field(
+            default=2,
+            description="Maximum research iterations in COMPLETE mode"
+        )
+        web_search_show_sources: bool = Field(
+            default=False,
+            description="Show sources in web search results"
+        )
+        web_search_debug: bool = Field(
+            default=False,
+            description="Enable detailed debug logging for web search"
+        )
+
+        # ─── Master Tool Debugging ───
+        master_debug: bool = Field(
+            default=False,
+            description="Enable comprehensive debug logging for ALL tool calls (web_search, image_generation) - prints to Docker logs"
+        )
+
+        # ─── Image Generation Configuration ───
+        image_gen_model: str = Field(
+            default="gpt-4o-image",
+            description="Model to use for image generation (e.g., gpt-4o-image, flux)"
+        )
+
+    def __init__(self):
+        self.valves = self.Valves()
+        self._web_search: Optional[ToolsInternal] = None
+        self.debug = Debug(enabled=False, tool_name="AgenticMasterTool")  # Will be updated from valves
+
+    def _get_web_search(self) -> ToolsInternal:
+        """Initialize and configure the web search tool."""
+        if self._web_search is None:
+            self._web_search = ToolsInternal()
+            # Sync valve settings
+            self._web_search.valves.exa_api_key = self.valves.exa_api_key
+            self._web_search.valves.router_model = self.valves.web_search_router_model
+            self._web_search.valves.quick_search_model = self.valves.web_search_quick_model
+            self._web_search.valves.complete_agent_model = self.valves.web_search_complete_agent_model
+            self._web_search.valves.complete_summarizer_model = self.valves.web_search_complete_summarizer_model
+            self._web_search.valves.quick_urls_to_search = self.valves.web_search_quick_urls
+            self._web_search.valves.quick_queries_to_crawl = self.valves.web_search_quick_crawl
+            self._web_search.valves.quick_max_context_chars = self.valves.web_search_quick_max_chars
+            self._web_search.valves.complete_urls_to_search_per_query = self.valves.web_search_complete_urls_per_query
+            self._web_search.valves.complete_queries_to_crawl = self.valves.web_search_complete_crawl_per_query
+            self._web_search.valves.complete_queries_to_generate = self.valves.web_search_complete_queries_per_iteration
+            self._web_search.valves.complete_max_search_iterations = self.valves.web_search_complete_max_iterations
+            self._web_search.valves.show_sources = self.valves.web_search_show_sources
+            self._web_search.valves.debug_enabled = self.valves.web_search_debug or self.valves.master_debug  # Enable if either is true
+            # Update debug instance - use web_search_debug OR master_debug
+            self._web_search.debug = Debug(enabled=(self.valves.web_search_debug or self.valves.master_debug))
+        return self._web_search
+
+    async def web_search(
+        self,
+        query: str,
+        mode: str = "AUTO",
+        __event_emitter__: Any = None,
+        __user__: Optional[Dict] = None,
+        __request__: Optional[Any] = None,
+        __messages__: Optional[List[Dict]] = None,
+    ) -> str:
+        """
+        Search the web with configurable depth and intelligence.
+
+        Args:
+            query: The search query or URL to process
+            mode: Search mode - "AUTO" (default), "CRAWL", "STANDARD", or "COMPLETE"
+                  - AUTO: Let the router decide based on the query
+                  - CRAWL: Extract content from a single URL
+                  - STANDARD: Quick search + synthesis (~5 sources, fast)
+                  - COMPLETE: Deep multi-iteration research (comprehensive but slower)
+            __event_emitter__: OpenWebUI event emitter for status updates
+            __user__: User object from OpenWebUI
+            __request__: Request object from OpenWebUI
+            __messages__: Message history for context
+
+        Returns:
+            Search results as formatted text
+
+        Examples:
+            await web_search(query="latest AI breakthroughs", mode="STANDARD")
+            await web_search(query="https://example.com/article", mode="CRAWL")
+            await web_search(query="comprehensive analysis of quantum computing", mode="COMPLETE")
+        """
+        # Update master debug state
+        self.debug.enabled = self.valves.master_debug
+        
+        # Start timing
+        _tool_start_time = time.perf_counter()
+        
+        # Log comprehensive tool invocation
+        if self.debug.enabled:
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🔍 WEB_SEARCH TOOL INVOKED BY LLM{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            
+            # Tool call details
+            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}📋 TOOL CALL DETAILS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Method: web_search(){self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Class: Tools (AgenticMasterTool){self.debug._COLORS['RESET']}", file=sys.stderr)
+            
+            # LLM parameters - what the model actually passed
+            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 LLM-PROVIDED PARAMETERS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   query (str):{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"      {repr(query[:200])}{'...' if len(query) > 200 else ''}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   mode (str):{self.debug._COLORS['RESET']} {repr(mode)}", file=sys.stderr)
+            
+            # OpenWebUI context parameters
+            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🔧 OPENWEBUI CONTEXT:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __event_emitter__:{self.debug._COLORS['RESET']} {type(__event_emitter__)}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __user__:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            if __user__:
+                for key, value in __user__.items():
+                    print(f"      {key}: {repr(str(value)[:100])}", file=sys.stderr)
+            else:
+                print(f"      None", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __request__:{self.debug._COLORS['RESET']} {type(__request__)}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __messages__:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            if __messages__:
+                print(f"      Count: {len(__messages__)}", file=sys.stderr)
+                print(f"      Last message role: {__messages__[-1].get('role', 'unknown')}", file=sys.stderr)
+                last_content = str(__messages__[-1].get('content', ''))[:200]
+                print(f"      Last message content: {repr(last_content)}{'...' if len(str(__messages__[-1].get('content', ''))) > 200 else ''}", file=sys.stderr)
+            else:
+                print(f"      None", file=sys.stderr)
+            
+            # Valve configuration being used
+            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}⚙️  ACTIVE VALVE CONFIGURATION:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   exa_api_key:{self.debug._COLORS['RESET']} {'SET' if self.valves.exa_api_key else 'NOT SET'}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   web_search_router_model:{self.debug._COLORS['RESET']} {self.valves.web_search_router_model}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   web_search_quick_model:{self.debug._COLORS['RESET']} {self.valves.web_search_quick_model}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   web_search_quick_urls:{self.debug._COLORS['RESET']} {self.valves.web_search_quick_urls}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   web_search_debug:{self.debug._COLORS['RESET']} {self.valves.web_search_debug}", file=sys.stderr)
+        
+        search_tool = self._get_web_search()
+
+        # Construct messages for the search tool
+        messages = __messages__ or []
+        if not messages:
+            messages = [{"role": "user", "content": query}]
+
+        # Override mode if specified
+        if mode.upper() in ["CRAWL", "STANDARD", "COMPLETE"]:
+            # Add mode override to system message
+            override_msg = {
+                "role": "system",
+                "content": f"[EXA_SEARCH_MODE] {mode.upper()}"
+            }
+            messages = [override_msg] + messages
+
+        # Call the web search tool
+        result = await search_tool.routed_search(
+            query=query,
+            __event_emitter__=__event_emitter__,
+            __user__=__user__,
+            __request__=__request__,
+            __messages__=messages
+        )
+
+        final_result = result.get("content", "No results found.")
+
+        # Calculate execution time
+        _tool_end_time = time.perf_counter()
+        _execution_time = _tool_end_time - _tool_start_time
+
+        # Log comprehensive output
+        if self.debug.enabled:
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}✅ WEB_SEARCH TOOL OUTPUT{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Result structure
+            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}📦 RESULT STRUCTURE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Type: {type(result)}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            if isinstance(result, dict):
+                print(f"{self.debug._COLORS['WHITE']}   Keys: {list(result.keys())}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Content analysis
+            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}📄 CONTENT ANALYSIS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   Content Length:{self.debug._COLORS['RESET']} {len(final_result)} characters", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   Content Type:{self.debug._COLORS['RESET']} {type(final_result)}", file=sys.stderr)
+
+            # Success/failure indicator
+            is_error = final_result.startswith("Search failed") or final_result == "No results found."
+            status_color = self.debug._COLORS['RED'] if is_error else self.debug._COLORS['GREEN']
+            status_icon = "❌" if is_error else "✓"
+            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{status_color}   {status_icon} {'FAILED' if is_error else 'SUCCESS'}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Content preview
+            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}👁️  CONTENT PREVIEW:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            preview_length = 400
+            preview = final_result[:preview_length]
+            print(f"{self.debug._COLORS['DIM']}{preview}{'...' if len(final_result) > preview_length else ''}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🏁 WEB_SEARCH TOOL COMPLETED{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
+
+        return final_result
+
+    async def image_generation(
+        self,
+        prompt: str,
+        description: str = None,
+        __event_emitter__: Any = None,
+        __user__: Optional[Dict] = None,
+        __request__: Optional[Any] = None,
+    ) -> str:
+        """
+        Generate an image from a text prompt.
+
+        Args:
+            prompt: Description of the image to generate (be specific and detailed)
+            description: Short description/caption for the image (optional)
+            __event_emitter__: OpenWebUI event emitter for status updates
+            __user__: User object from OpenWebUI
+            __request__: Request object from OpenWebUI
+
+        Returns:
+            Markdown-formatted image with URL and caption
+
+        Examples:
+            await image_generation(
+                prompt="A serene mountain landscape at sunset with purple and orange skies",
+                description="Mountain sunset"
+            )
+        """
+        # Update master debug state
+        self.debug.enabled = self.valves.master_debug
+
+        # Start timing
+        _tool_start_time = time.perf_counter()
+
+        # Log comprehensive tool invocation
+        if self.debug.enabled:
+            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🎨 IMAGE_GENERATION TOOL INVOKED BY LLM{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # Tool call details
+            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}📋 TOOL CALL DETAILS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Method: image_generation(){self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['WHITE']}   Class: Tools (AgenticMasterTool){self.debug._COLORS['RESET']}", file=sys.stderr)
+
+            # LLM parameters
+            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 LLM-PROVIDED PARAMETERS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   prompt (str):{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"      {repr(prompt[:300])}{'...' if len(prompt) > 300 else ''}", file=sys.stderr)
+            print(f"{self.debug._COLORS['CYAN']}   description (str|None):{self.debug._COLORS['RESET']} {repr(description)}", file=sys.stderr)
+
+            # OpenWebUI context
+            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🔧 OPENWEBUI CONTEXT:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __event_emitter__:{self.debug._COLORS['RESET']} {type(__event_emitter__)}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __user__:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            if __user__:
+                for key, value in __user__.items():
+                    print(f"      {key}: {repr(str(value)[:100])}", file=sys.stderr)
+            else:
+                print(f"      None", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   __request__:{self.debug._COLORS['RESET']} {type(__request__)}", file=sys.stderr)
+
+            # Valve configuration
+            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}⚙️  ACTIVE VALVE CONFIGURATION:{self.debug._COLORS['RESET']}", file=sys.stderr)
+            print(f"{self.debug._COLORS['DIM']}   image_gen_model:{self.debug._COLORS['RESET']} {self.valves.image_gen_model}", file=sys.stderr)
+
+        if description is None:
+            # Generate a short description from the prompt
+            description = prompt[:50] + ("..." if len(prompt) > 50 else "")
+
+        placeholder_id = str(uuid4())
+
+        if __event_emitter__:
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {
+                        "description": f'Generating image: "{prompt[:60]}..."',
+                        "done": False,
+                    },
+                }
+            )
+
+        try:
+            # Call the image generation model
+            resp = await generate_chat_completion(
+                request=__request__,
+                form_data={
+                    "model": self.valves.image_gen_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                },
+                user=__user__,
+            )
+            image_reply = resp["choices"][0]["message"]["content"].strip()
+
+            # Extract URL from response
+            url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+            url_match = re.search(url_pattern, image_reply)
+            image_url = url_match.group(0) if url_match else image_reply
+
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": "✓ Image generated", "done": True},
+                    }
+                )
+
+            # Return markdown-formatted image
+            result = f"![{description}]({image_url})\n\n*{description}*"
+
+            # Calculate execution time
+            _tool_end_time = time.perf_counter()
+            _execution_time = _tool_end_time - _tool_start_time
+
+            # Log comprehensive successful output
+            if self.debug.enabled:
+                print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}✅ IMAGE_GENERATION TOOL OUTPUT{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Generated image details
+                print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}🖼️  GENERATED IMAGE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Image URL:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"      {image_url}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Description:{self.debug._COLORS['RESET']} {repr(description)}", file=sys.stderr)
+
+                # Model used
+                print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 MODEL USED:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['WHITE']}   {self.valves.image_gen_model}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Response analysis
+                print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}📊 RESPONSE ANALYSIS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Raw Response Length:{self.debug._COLORS['RESET']} {len(image_reply)} characters", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Markdown Output Length:{self.debug._COLORS['RESET']} {len(result)} characters", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   URL Valid:{self.debug._COLORS['RESET']} {url_match is not None}", file=sys.stderr)
+
+                # Status
+                print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}   ✓ SUCCESS{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Return markdown preview
+                print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}📤 RETURN MARKDOWN:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['DIM']}   {result}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🏁 IMAGE_GENERATION TOOL COMPLETED{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
+
+            return result
+
+        except Exception as e:
+            if __event_emitter__:
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": f"❌ Failed: {e}", "done": True},
+                    }
+                )
+            error_msg = f"❌ Image generation failed: {str(e)}"
+
+            # Calculate execution time
+            _tool_end_time = time.perf_counter()
+            _execution_time = _tool_end_time - _tool_start_time
+
+            # Log comprehensive error output
+            if self.debug.enabled:
+                print(f"\n{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}❌ IMAGE_GENERATION TOOL OUTPUT (ERROR){self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Error details
+                print(f"\n{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}⚠️  ERROR DETAILS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['YELLOW']}   Exception Type:{self.debug._COLORS['RESET']} {type(e).__name__}", file=sys.stderr)
+                print(f"{self.debug._COLORS['YELLOW']}   Exception Message:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"      {str(e)}", file=sys.stderr)
+
+                # Context at failure
+                print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}📋 CONTEXT AT FAILURE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Prompt (first 200 chars):{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"      {repr(prompt[:200])}", file=sys.stderr)
+                print(f"{self.debug._COLORS['CYAN']}   Model:{self.debug._COLORS['RESET']} {self.valves.image_gen_model}", file=sys.stderr)
+
+                # Status
+                print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}   ❌ FAILED{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                # Error message returned to user
+                print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}📤 RETURN MESSAGE:{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['DIM']}   {error_msg}{self.debug._COLORS['RESET']}", file=sys.stderr)
+
+                print(f"\n{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}🏁 IMAGE_GENERATION TOOL COMPLETED WITH ERROR{self.debug._COLORS['RESET']}", file=sys.stderr)
+                print(f"{self.debug._COLORS['RED']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
+
+            return error_msg
+
+
+# For backward compatibility, export the main class
+__all__ = ["Tools"]

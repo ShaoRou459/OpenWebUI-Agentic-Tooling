@@ -36,16 +36,35 @@ The OpenWebUI Agentic Tooling Suite transforms your local AI models from passive
 
 ## Architecture
 
-The suite consists of two main components:
+The suite offers two architectural approaches:
+
+### Approach 1: Automatic Routing (Recommended for most users)
 
 1. **Auto Tool Selector** (Function): Master router that analyzes queries and selects appropriate tools
 2. **Exa Search Router** (Tool): Advanced search capabilities with fallback to native OpenWebUI search
 
 ![Architecture Diagram](https://github.com/user-attachments/assets/e79f7658-020f-4804-8d16-e4414ad781e8)
 
+### Approach 2: Agentic Master Tool (New! For advanced agentic models)
+
+**Agentic Master Tool**: A unified tool that exposes all capabilities as directly-callable functions for agentic models like GPT-4o, Claude 3.5+, and other tool-using models.
+
+**Key Differences:**
+
+| Feature | Auto Tool Selector | Agentic Master Tool |
+|---------|-------------------|---------------------|
+| **Decision Making** | Middleware decides | Model decides |
+| **Tool Calls** | Implicit/hidden | Explicit/visible |
+| **Transparency** | Lower | Higher |
+| **Best For** | All models | Agentic models with strong tool use |
+
+📖 **Learn More**: See [master_tool/README.md](master_tool/README.md) for detailed documentation and examples.
+
 ---
 
 ## Installation & Setup
+
+> **Choose Your Approach:** Install either the **Auto Tool Selector** (automatic routing) OR the **Agentic Master Tool** (explicit tool calls). For most users, start with Auto Tool Selector.
 
 ### Prerequisites
 
@@ -60,7 +79,9 @@ exit
 docker restart open-webui
 ```
 
-### Step 2: Add the Components
+### Step 2: Choose Your Installation Path
+
+#### Option A: Auto Tool Selector (Recommended for most users)
 
 1. **Install Auto Tool Selector (Function)**:
    - Go to **Admin Settings → Functions → New Function**
@@ -74,17 +95,28 @@ docker restart open-webui
    - **Important**: Set Tool ID to `exa_router_search`
    - Save the tool
 
-### Step 3: Configure Settings
-
-All configuration is now done through the UI settings - no manual file editing required!
-
-1. **Enable the Function**:
+3. **Configure Settings**:
    - In your model settings, enable only the **Auto Tool Selector** function
    - Do not enable the Exa Search Router tool directly
-
-2. **Configure Your Preferences**:
-   - Access function settings through the model interface
    - Configure API keys, models, and behavior options as needed
+
+#### Option B: Agentic Master Tool (For advanced agentic models)
+
+1. **Install Agentic Master Tool**:
+   - Go to **Workspace → Tools → New Tool**
+   - Copy and paste the contents of `master_tool/agentic_master_tool.py`
+   - Save the tool
+
+2. **Configure Settings**:
+   - Enable the **Agentic Master Tool** in your chat
+   - Set your `exa_api_key` in the tool's valves
+   - Configure other settings as needed (defaults are sensible)
+
+3. **Use with agentic models**:
+   - Works best with GPT-4o, Claude 3.5 Sonnet, or other tool-using models
+   - The model will explicitly call tools like `web_search(query="...", mode="STANDARD")`
+
+📖 **Full Guide**: See [master_tool/README.md](master_tool/README.md) for detailed instructions and examples.
 
 ---
 
