@@ -1,17 +1,19 @@
 """
 Title: Agentic Master Tool
-Description: A unified master tool exposing all capabilities (web search, code interpreter, image generation) as directly-callable functions for agentic models.
+Description: A unified master tool exposing web search and image generation as directly-callable functions for agentic models.
 Author: ShaoRou459
 Author URL: https://github.com/ShaoRou459
-Version: 2.0.0
+Version: 2.1.0
 
 This is a fully self-contained tool that embeds all functionality in a single file.
 No external dependencies on other tool files - everything is included here.
 
 Available Tools:
 1. web_search - Search the web with configurable depth (CRAWL/STANDARD/COMPLETE)
-2. code_interpreter - Enable Python/Jupyter code execution  
-3. image_generation - Generate images using AI models
+2. image_generation - Generate images using AI models
+
+Note: Code interpreter is NOT included as tools cannot set the required feature flags.
+      Enable code interpreter globally in OpenWebUI Admin → Settings instead.
 
 Requirements: exa_py, open_webui
 """
@@ -2167,16 +2169,10 @@ class Tools:
             description="Enable detailed debug logging for web search"
         )
 
-        # ─── Code Interpreter Configuration ───
-        code_interpreter_use_jupyter: bool = Field(
-            default=True,
-            description="Use full Jupyter notebook environment (True) or basic Python execution (False)"
-        )
-
         # ─── Master Tool Debugging ───
         master_debug: bool = Field(
             default=False,
-            description="Enable comprehensive debug logging for ALL tool calls (web_search, code_interpreter, image_generation) - prints to Docker logs"
+            description="Enable comprehensive debug logging for ALL tool calls (web_search, image_generation) - prints to Docker logs"
         )
 
         # ─── Image Generation Configuration ───
@@ -2363,187 +2359,6 @@ class Tools:
             print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
 
         return final_result
-
-    async def code_interpreter(
-        self,
-        enable: bool = True,
-        use_jupyter: bool = None,
-        __event_emitter__: Any = None,
-        __user__: Optional[Dict] = None,
-        __request__: Optional[Any] = None,
-        __messages__: Optional[List[Dict]] = None,
-    ) -> str:
-        """
-        Provide code execution instructions to the LLM.
-
-        IMPORTANT: This tool does NOT enable code execution itself. OpenWebUI's code
-        interpreter feature must be enabled in the admin settings first. This tool
-        only provides instructions to the LLM on how to use code execution tags.
-
-        Args:
-            enable: Whether to enable code interpreter (default: True)
-            use_jupyter: DEPRECATED - This parameter is ignored. The interpreter type is
-                        controlled by the 'code_interpreter_use_jupyter' valve setting.
-            __event_emitter__: OpenWebUI event emitter for status updates
-            __user__: User object from OpenWebUI
-            __request__: Request object from OpenWebUI
-            __messages__: Message history from OpenWebUI
-
-        Returns:
-            Instructions for the LLM on how to use code execution tags
-
-        Examples:
-            await code_interpreter(enable=True)
-
-        Requirements:
-            - OpenWebUI code interpreter must be enabled in Admin → Settings
-            - For Jupyter: uploader.py must be in Jupyter's home directory
-
-        Note:
-            After calling this, the model will know to use <code_interpreter> tags:
-            <code_interpreter type="code" lang="python">
-            import matplotlib.pyplot as plt
-            plt.plot([1, 2, 3, 4])
-            plt.savefig('plot.png')
-            </code_interpreter>
-        """
-        # Update master debug state
-        self.debug.enabled = self.valves.master_debug
-
-        # Start timing
-        _tool_start_time = time.perf_counter()
-
-        # Log comprehensive tool invocation
-        if self.debug.enabled:
-            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}💻 CODE_INTERPRETER TOOL INVOKED BY LLM{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['CYAN']}⏰ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}{self.debug._COLORS['RESET']}", file=sys.stderr)
-
-            # Tool call details
-            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}📋 TOOL CALL DETAILS:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['WHITE']}   Method: code_interpreter(){self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['WHITE']}   Class: Tools (AgenticMasterTool){self.debug._COLORS['RESET']}", file=sys.stderr)
-
-            # LLM parameters
-            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}🤖 LLM-PROVIDED PARAMETERS:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['CYAN']}   enable (bool):{self.debug._COLORS['RESET']} {repr(enable)}", file=sys.stderr)
-            print(f"{self.debug._COLORS['CYAN']}   use_jupyter (bool|None):{self.debug._COLORS['RESET']} {repr(use_jupyter)} {self.debug._COLORS['YELLOW']}[IGNORED - valve setting used]{self.debug._COLORS['RESET']}", file=sys.stderr)
-
-            # OpenWebUI context
-            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🔧 OPENWEBUI CONTEXT:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['DIM']}   __event_emitter__:{self.debug._COLORS['RESET']} {type(__event_emitter__)}", file=sys.stderr)
-
-            # Valve configuration
-            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}⚙️  ACTIVE VALVE CONFIGURATION:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['DIM']}   code_interpreter_use_jupyter:{self.debug._COLORS['RESET']} {self.valves.code_interpreter_use_jupyter} {self.debug._COLORS['GREEN']}[WILL BE USED]{self.debug._COLORS['RESET']}", file=sys.stderr)
-
-        if not enable:
-            _tool_end_time = time.perf_counter()
-            _execution_time = _tool_end_time - _tool_start_time
-
-            if self.debug.enabled:
-                print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
-                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}✅ CODE_INTERPRETER TOOL OUTPUT{self.debug._COLORS['RESET']}", file=sys.stderr)
-                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
-                print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
-                print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
-                print(f"{self.debug._COLORS['YELLOW']}   ⚠️  DISABLED BY LLM{self.debug._COLORS['RESET']}", file=sys.stderr)
-                print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
-                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🏁 CODE_INTERPRETER TOOL COMPLETED{self.debug._COLORS['RESET']}", file=sys.stderr)
-                print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
-
-            return "Code interpreter disabled for this conversation."
-
-        # Always use valve setting (valve takes precedence over LLM parameter)
-        use_jupyter = self.valves.code_interpreter_use_jupyter
-
-        if __event_emitter__:
-            await __event_emitter__(
-                {
-                    "type": "status",
-                    "data": {
-                        "description": "Preparing Python environment...",
-                        "done": False,
-                    },
-                }
-            )
-
-        # Determine which prompt to use
-        if use_jupyter:
-            prompt = """Code interpreter enabled: You now have access to a full Jupyter notebook environment. When you need to run Python code (for data analysis, calculations, plotting, etc.), use the following syntax:
-
-<code_interpreter type="code" lang="python">
-# Your Python code here
-import pandas as pd
-# etc.
-</code_interpreter>
-
-Important notes:
-- Always cd /work first in Jupyter
-- Write self-contained code blocks
-- To upload files: import uploader; link = uploader.upload_file("filename"); print(link)
-- Only use when actually needed for computation/visualization"""
-        else:
-            prompt = """Code interpreter enabled: You can now execute Python code. Use this syntax:
-
-<code_interpreter type="code" lang="python">
-# Your Python code here
-</code_interpreter>
-
-Only use when you need to actually execute code (calculations, data processing, etc.), not for code examples."""
-
-        # NOTE: In the tool pattern (vs middleware), we can't directly modify the request body
-        # or inject system messages. We can only return a message that tells the LLM how to proceed.
-        # The code interpreter feature must be enabled in OpenWebUI settings for tags to work.
-
-        if __event_emitter__:
-            await __event_emitter__(
-                {
-                    "type": "status",
-                    "data": {"description": "", "done": True},
-                }
-            )
-
-        interpreter_type = "Jupyter notebook" if use_jupyter else "basic Python"
-
-        # Return the prompt as the result so the LLM receives the instructions
-        result = prompt
-
-        # Calculate execution time
-        _tool_end_time = time.perf_counter()
-        _execution_time = _tool_end_time - _tool_start_time
-
-        # Log comprehensive output
-        if self.debug.enabled:
-            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}✅ CODE_INTERPRETER TOOL OUTPUT{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['CYAN']}⏱️  Execution Time: {_execution_time:.3f}s{self.debug._COLORS['RESET']}", file=sys.stderr)
-
-            # Configuration used
-            print(f"\n{self.debug._COLORS['YELLOW']}{self.debug._COLORS['BOLD']}⚙️  CONFIGURATION APPLIED:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['WHITE']}   Interpreter Type: {interpreter_type}{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['WHITE']}   Using Jupyter: {use_jupyter}{self.debug._COLORS['RESET']}", file=sys.stderr)
-
-            # Prompt injected
-            print(f"\n{self.debug._COLORS['MAGENTA']}{self.debug._COLORS['BOLD']}💉 INJECTED PROMPT:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            prompt_preview = prompt[:200] if use_jupyter else prompt[:150]
-            print(f"{self.debug._COLORS['DIM']}   {prompt_preview}...{self.debug._COLORS['RESET']}", file=sys.stderr)
-
-            # Status
-            print(f"\n{self.debug._COLORS['BLUE']}{self.debug._COLORS['BOLD']}🎯 STATUS:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['GREEN']}   ✓ ENABLED SUCCESSFULLY{self.debug._COLORS['RESET']}", file=sys.stderr)
-
-            # Return message
-            print(f"\n{self.debug._COLORS['PURPLE']}{self.debug._COLORS['BOLD']}📤 RETURN MESSAGE:{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['DIM']}   {result}{self.debug._COLORS['RESET']}", file=sys.stderr)
-
-            print(f"\n{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}🏁 CODE_INTERPRETER TOOL COMPLETED{self.debug._COLORS['RESET']}", file=sys.stderr)
-            print(f"{self.debug._COLORS['GREEN']}{self.debug._COLORS['BOLD']}{'=' * 100}{self.debug._COLORS['RESET']}\n", file=sys.stderr)
-
-        return result
 
     async def image_generation(
         self,
