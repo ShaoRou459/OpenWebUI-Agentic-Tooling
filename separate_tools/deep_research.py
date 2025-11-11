@@ -1,9 +1,9 @@
 """
-Title: Deep Research Tool
-Description: Multi-iteration comprehensive research with iterative query generation (COMPLETE mode)
+Title: Deep Research Tool (Multi-Agent)
+Description: Parallel multi-agent research system with independent sub-agents
 author: ShaoRou459
 author_url: https://github.com/ShaoRou459
-Version: 1.0.0
+Version: 2.0.0
 Requirements: exa_py, open_webui
 """
 
@@ -14,6 +14,7 @@ import asyncio
 from typing import Any, Callable, Awaitable, Dict, List, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
+from dataclasses import dataclass
 
 from open_webui.utils.chat import generate_chat_completion
 
@@ -25,125 +26,175 @@ except ImportError:
     EXA_AVAILABLE = False
 
 
-# System prompts for the iterative research system
-INTRODUCTORY_QUERY_PROMPT = """
-You are an information-seeking specialist. Generate an introductory search query that helps understand the context and background of what the user is asking about.
+# ============================================================================
+# System Prompts for Multi-Agent Research
+# ============================================================================
+
+GOAL_DEFINITION_PROMPT = """
+You are a research strategist. Analyze the user's question and define a clear, comprehensive research goal.
 
 CURRENT DATE: {current_date}
-
-This query should be INFORMATIONAL, not trying to answer their question directly. Think of it as "What do I need to know about this topic first?"
-
-Examples:
-- User: "How do I optimize my React app performance?" → "React application performance optimization techniques"
-- User: "What's the latest news about OpenAI?" → "OpenAI company recent developments {current_year}"
-
-Output your introductory query on a line starting with "QUERY: "
-"""
-
-OBJECTIVE_SETTING_PROMPT = """
-You are a research strategist. Based on the user's request and introductory information gathered, set clear research objectives.
-
-CURRENT DATE: {current_date}
-
-Analyze:
-1. What exactly is the user asking for?
-2. What are the key components of their request?
-3. What direction should the research take?
-
-Output a structured analysis with:
-OBJECTIVES: [List 3-5 specific research objectives]
-RESEARCH_DIRECTION: [Brief description of the overall research approach]
-KEY_COMPONENTS: [List the main parts of the user's request that need to be addressed]
-"""
-
-ITERATION_REASONING_PROMPT = """
-You are a research iteration planner. Based on your current knowledge and what you've found so far, reason about what to search for next.
-
-CURRENT DATE: {current_date}
-
-Current situation:
-- Research objectives: {objectives}
-- Previous findings summary: {previous_findings}
-- Iteration: {current_iteration} of {max_iterations}
 
 Your task:
-1. Analyze what you've learned so far
-2. Identify what's still missing
-3. Reason about the best search approach for this iteration
-4. Generate {query_count} diverse, specific search queries
+1. Understand what the user is truly asking
+2. Define the overarching research goal
+3. Clarify the scope and depth needed
 
-Note: For time-sensitive topics, include {current_year} in your queries when relevant.
+User's Question: {user_query}
 
 Output format:
-ANALYSIS: [What you've learned and what's missing]
-REASONING: [Why these specific searches will help]
-QUERIES: ["query1", "query2", "query3", ...]
+GOAL: [A clear, comprehensive statement of what we need to research]
+SCOPE: [What should be included and what should be excluded]
+EXPECTED_DEPTH: [How deep should the research go - surface-level, moderate, or comprehensive]
 """
 
-ITERATION_CONCLUSION_PROMPT = """
-You are a research analyst. Summarize what you found in this iteration and determine next steps.
+OBJECTIVE_IDENTIFICATION_PROMPT = """
+You are a research planner. Based on the research goal, identify distinct research areas that need to be explored.
 
 CURRENT DATE: {current_date}
-ITERATION: {current_iteration} of {max_iterations}
 
-Provide:
-FINDINGS_SUMMARY: [Key information discovered this iteration - be concise but comprehensive]
-PROGRESS_ASSESSMENT: [How much closer are you to answering the user's question?]
-NEXT_STEPS: [What should the next iteration focus on, or should research conclude?]
+Research Goal: {research_goal}
+
+Your task:
+Identify between 2 and 5 DISTINCT research areas/objectives that together will comprehensively address the research goal. Each objective should be:
+- Specific and focused
+- Non-overlapping with other objectives
+- Essential to answering the user's question
+
+Output format (JSON array):
+OBJECTIVES: ["objective 1", "objective 2", "objective 3", ...]
+
+Provide 2-5 objectives depending on the complexity of the research goal.
+"""
+
+SUB_AGENT_REASONING_PROMPT = """
+You are a specialized research sub-agent focused on a specific research objective.
+
+CURRENT DATE: {current_date}
+
+Your Objective: {objective}
+Overall Research Goal: {research_goal}
+Current Round: {current_round} of {max_rounds}
+
+Previous Findings (from earlier rounds):
+{previous_findings}
+
+Your task:
+1. Analyze what you've learned so far about YOUR SPECIFIC objective
+2. Identify what's still missing for YOUR objective
+3. Generate 2-3 targeted search queries to fill the gaps
+
+Output format:
+ANALYSIS: [What you know and what's missing about your objective]
+REASONING: [Why these searches will help complete your objective]
+QUERIES: ["query1", "query2", "query3"]
+"""
+
+SUB_AGENT_CONCLUSION_PROMPT = """
+You are a specialized research sub-agent. Summarize your findings for your specific objective.
+
+CURRENT DATE: {current_date}
+
+Your Objective: {objective}
+Round: {current_round} of {max_rounds}
+
+All content gathered so far:
+{all_content}
+
+Your task:
+1. Summarize key findings relevant to YOUR objective
+2. Assess completeness of your research
+3. Decide if you need another round
+
+Output format:
+FINDINGS: [Comprehensive summary of what you've learned about your objective]
+COMPLETENESS: [How complete is your research on this objective - percentage or assessment]
 DECISION: [CONTINUE or FINISH]
 
-Note: If this is iteration {max_iterations}, you must decide FINISH unless critical information is still missing.
+Note: If this is round {max_rounds}, you must decide FINISH.
 """
 
 FINAL_SYNTHESIS_PROMPT = """
-You are an information organizer. Your job is to structure the research findings so the chat model can effectively answer the user's question.
+You are a master synthesizer. You will receive research findings from multiple specialized sub-agents, each focused on a different aspect of the user's question.
 
 CURRENT DATE: {current_date}
 
-Using the research chain and findings summaries, organize the information into a clear, comprehensive knowledge base that covers:
-- Key facts and findings relevant to the user's question
-- Important context and background information
-- Relevant developments, especially recent ones when applicable
-- Different perspectives or approaches discovered
-- Any actionable insights or recommendations found
+User's Original Question: {user_query}
+Research Goal: {research_goal}
 
-Structure this as organized, factual information that provides the chat model with everything needed to give a complete response to the user's original question. Focus on being comprehensive and well-organized rather than directly answering.
+Sub-Agent Findings:
+{all_agent_findings}
 
-Include raw URLs or direct quotes from sources when needed.
+Your task:
+Synthesize all sub-agent findings into a comprehensive, well-organized knowledge base that enables the chat model to provide a complete answer. Structure the information to:
+
+1. Present a holistic view combining all research areas
+2. Highlight connections and relationships between different aspects
+3. Include specific facts, data, and sources
+4. Note any contradictions or different perspectives
+5. Provide actionable insights when relevant
+
+Focus on creating an informative knowledge base rather than directly answering. Include URLs and specific source references.
 """
 
 
+# ============================================================================
+# Data Structures
+# ============================================================================
+
+@dataclass
+class SubAgentFindings:
+    """Results from a single sub-agent's research."""
+    objective: str
+    rounds_completed: int
+    findings_summary: str
+    sources_consulted: List[str]
+    total_content_gathered: int
+
+
+# ============================================================================
+# Main Tool Class
+# ============================================================================
+
 class Tools:
-    """Deep Research Tool for OpenWebUI - comprehensive multi-iteration research"""
+    """Deep Research Tool - Parallel Multi-Agent Research System"""
 
     class Valves(BaseModel):
         exa_api_key: str = Field(
             default="",
             description="Your Exa API key for web search."
         )
-        agent_model: str = Field(
+        coordinator_model: str = Field(
             default="gpt-4-turbo",
-            description="The model for all agentic steps (reasoning, deciding, query generation)."
+            description="Model for goal definition and objective identification."
+        )
+        sub_agent_model: str = Field(
+            default="gpt-4-turbo",
+            description="Model for sub-agent reasoning and research."
         )
         synthesizer_model: str = Field(
             default="gpt-4-turbo",
-            description="Dedicated model for the final synthesis."
+            description="Model for final synthesis of all findings."
+        )
+        max_objectives: int = Field(
+            default=5,
+            description="Maximum number of parallel research objectives (2-5)."
+        )
+        sub_agent_max_rounds: int = Field(
+            default=3,
+            description="Maximum research rounds per sub-agent."
+        )
+        queries_per_round: int = Field(
+            default=2,
+            description="Number of search queries per sub-agent round."
         )
         urls_per_query: int = Field(
             default=5,
-            description="Number of URLs to fetch for each query."
+            description="Number of URLs to fetch per query."
         )
         urls_to_crawl: int = Field(
             default=3,
-            description="Number of top URLs to crawl for each query."
-        )
-        queries_per_iteration: int = Field(
-            default=3,
-            description="Number of queries to generate per iteration."
-        )
-        max_iterations: int = Field(
-            default=2,
-            description="Maximum number of research iterations."
+            description="Number of URLs to crawl per query."
         )
 
     def __init__(self):
@@ -173,11 +224,14 @@ class Tools:
         __user__: Optional[Dict] = None,
     ) -> str:
         """
-        Conduct comprehensive, multi-iteration research on a topic.
+        Conduct comprehensive research using a parallel multi-agent system.
 
-        This tool performs iterative research with multiple search cycles,
-        reasoning about what information is still needed, and synthesizing
-        findings into a comprehensive knowledge base.
+        Architecture:
+        1. AI defines research goal
+        2. Identifies 2-5 distinct research objectives
+        3. Launches parallel sub-agents (one per objective)
+        4. Each sub-agent conducts up to 3 rounds of research with reasoning
+        5. Synthesizer combines all findings into comprehensive knowledge base
 
         Args:
             query: The research question or topic
@@ -186,15 +240,13 @@ class Tools:
             __user__: User object from OpenWebUI
 
         Returns:
-            Comprehensive research findings formatted as a knowledge base
+            Comprehensive research findings from all sub-agents
 
         Examples:
             await deep_research("What are the latest developments in quantum computing and their practical applications?")
         """
-        # Check if Exa is available
         if not EXA_AVAILABLE:
-            error_msg = "❌ Deep research unavailable: exa_py module not installed. Please install with: pip install exa_py"
-            return error_msg
+            return "❌ Deep research unavailable: exa_py module not installed. Please install with: pip install exa_py"
 
         async def _status(desc: str, done: bool = False) -> None:
             if __event_emitter__:
@@ -204,71 +256,75 @@ class Tools:
 
         try:
             current_date = datetime.now().strftime("%Y-%m-%d")
-            current_year = datetime.now().year
 
-            # Phase 1: Generate introductory query
-            await _status("Gathering initial context...")
+            # ================================================================
+            # PHASE 1: Define Research Goal
+            # ================================================================
+            await _status("🎯 Defining research goal...")
 
-            intro_query = await self._generate_intro_query(query, current_date, current_year, __request__, __user__)
+            research_goal = await self._define_research_goal(
+                query, current_date, __request__, __user__
+            )
 
-            # Search with introductory query
-            intro_content = await self._search_and_get_content(intro_query, _status, __request__, __user__)
+            # ================================================================
+            # PHASE 2: Identify Research Objectives
+            # ================================================================
+            await _status("📋 Identifying research objectives...")
 
-            if not intro_content:
-                intro_content = "Unable to gather initial context. Proceeding with research based on query directly."
+            objectives = await self._identify_objectives(
+                query, research_goal, current_date, __request__, __user__
+            )
 
-            # Phase 2: Set research objectives
-            await _status("Setting research objectives...")
+            # Limit to max_objectives
+            objectives = objectives[:self.valves.max_objectives]
 
-            objectives = await self._set_objectives(query, intro_content, current_date, __request__, __user__)
+            await _status(f"🚀 Launching {len(objectives)} parallel research agents...")
 
-            # Phase 3: Iterative research
-            research_chain = [
-                f"INITIAL CONTEXT: {intro_content[:10000]}...",
-                f"OBJECTIVES: {objectives}"
+            # ================================================================
+            # PHASE 3: Launch Parallel Sub-Agents
+            # ================================================================
+            # Create tasks for each sub-agent
+            sub_agent_tasks = [
+                self._run_sub_agent(
+                    objective=obj,
+                    research_goal=research_goal,
+                    current_date=current_date,
+                    agent_id=idx + 1,
+                    total_agents=len(objectives),
+                    status_func=_status,
+                    request=__request__,
+                    user=__user__
+                )
+                for idx, obj in enumerate(objectives)
             ]
-            previous_findings = "Initial context gathered from introductory search."
 
-            for iteration in range(1, self.valves.max_iterations + 1):
-                await _status(f"Research iteration {iteration}/{self.valves.max_iterations}...")
+            # Run all sub-agents in parallel
+            all_findings = await asyncio.gather(*sub_agent_tasks, return_exceptions=True)
 
-                # Generate queries for this iteration
-                queries = await self._generate_iteration_queries(
-                    objectives, previous_findings, iteration, current_date, current_year, __request__, __user__
-                )
+            # Filter out exceptions
+            valid_findings = []
+            for idx, finding in enumerate(all_findings):
+                if isinstance(finding, Exception):
+                    await _status(f"⚠️ Sub-agent {idx + 1} failed: {str(finding)[:50]}")
+                else:
+                    valid_findings.append(finding)
 
-                # Execute searches
-                iteration_findings = []
-                for search_query in queries:
-                    await _status(f"Searching: {search_query[:40]}...")
-                    content = await self._search_and_get_content(search_query, _status, __request__, __user__)
-                    if content:
-                        iteration_findings.append(content)
+            if not valid_findings:
+                return "❌ All sub-agents failed. Please try again."
 
-                # Conclude iteration
-                await _status(f"Analyzing iteration {iteration} findings...")
+            # ================================================================
+            # PHASE 4: Synthesize All Findings
+            # ================================================================
+            await _status(f"🔄 Synthesizing findings from {len(valid_findings)} agents...")
 
-                iteration_content = "\n\n".join(iteration_findings) if iteration_findings else "No significant findings in this iteration."
-
-                conclusion = await self._conclude_iteration(
-                    query, objectives, previous_findings, iteration_content, iteration, current_date, __request__, __user__
-                )
-
-                # Extract findings summary and decision
-                findings_summary = self._extract_field(conclusion, "FINDINGS_SUMMARY:")
-                decision = self._extract_field(conclusion, "DECISION:")
-
-                research_chain.append(f"ITERATION {iteration}: {findings_summary}")
-                previous_findings = findings_summary
-
-                if decision == "FINISH" or iteration == self.valves.max_iterations:
-                    break
-
-            # Phase 4: Final synthesis
-            await _status("Synthesizing comprehensive answer...")
-
-            research_summary = "\n\n".join(research_chain)
-            final_answer = await self._synthesize_final_answer(query, research_summary, current_date, __request__, __user__)
+            final_answer = await self._synthesize_all_findings(
+                query=query,
+                research_goal=research_goal,
+                all_findings=valid_findings,
+                current_date=current_date,
+                request=__request__,
+                user=__user__
+            )
 
             await _status("✓ Research complete", done=True)
 
@@ -278,13 +334,24 @@ class Tools:
             await _status("", done=True)
             return f"❌ Deep research failed: {str(e)}"
 
-    async def _generate_intro_query(self, query: str, current_date: str, current_year: int, request, user) -> str:
-        """Generate introductory search query."""
+    # ========================================================================
+    # Phase 1: Goal Definition
+    # ========================================================================
+
+    async def _define_research_goal(
+        self, query: str, current_date: str, request, user
+    ) -> str:
+        """Define the overarching research goal."""
         payload = {
-            "model": self.valves.agent_model,
+            "model": self.valves.coordinator_model,
             "messages": [
-                {"role": "system", "content": INTRODUCTORY_QUERY_PROMPT.format(current_date=current_date, current_year=current_year)},
-                {"role": "user", "content": f"User's request: {query}"},
+                {
+                    "role": "system",
+                    "content": GOAL_DEFINITION_PROMPT.format(
+                        current_date=current_date, user_query=query
+                    )
+                },
+                {"role": "user", "content": f"Define the research goal for: {query}"},
             ],
             "stream": False,
         }
@@ -292,45 +359,32 @@ class Tools:
         resp = await generate_chat_completion(request=request, form_data=payload, user=user)
         response_text = resp["choices"][0]["message"]["content"]
 
-        # Extract query
+        # Extract GOAL field
         for line in response_text.split("\n"):
-            if line.strip().startswith("QUERY:"):
-                return line.split("QUERY:", 1)[1].strip()
+            if line.strip().startswith("GOAL:"):
+                return line.split("GOAL:", 1)[1].strip()
 
         # Fallback
         return query
 
-    async def _set_objectives(self, query: str, intro_content: str, current_date: str, request, user) -> str:
-        """Set research objectives."""
+    # ========================================================================
+    # Phase 2: Objective Identification
+    # ========================================================================
+
+    async def _identify_objectives(
+        self, query: str, research_goal: str, current_date: str, request, user
+    ) -> List[str]:
+        """Identify distinct research objectives."""
         payload = {
-            "model": self.valves.agent_model,
+            "model": self.valves.coordinator_model,
             "messages": [
-                {"role": "system", "content": OBJECTIVE_SETTING_PROMPT.format(current_date=current_date)},
-                {"role": "user", "content": f"User's request: {query}\n\nIntroductory information:\n{intro_content}"},
-            ],
-            "stream": False,
-        }
-
-        resp = await generate_chat_completion(request=request, form_data=payload, user=user)
-        return resp["choices"][0]["message"]["content"]
-
-    async def _generate_iteration_queries(self, objectives: str, previous_findings: str, iteration: int, current_date: str, current_year: int, request, user) -> List[str]:
-        """Generate search queries for an iteration."""
-        prompt = ITERATION_REASONING_PROMPT.format(
-            current_date=current_date,
-            current_year=current_year,
-            objectives=objectives[:6000],
-            previous_findings=previous_findings[:16000],
-            current_iteration=iteration,
-            max_iterations=self.valves.max_iterations,
-            query_count=self.valves.queries_per_iteration
-        )
-
-        payload = {
-            "model": self.valves.agent_model,
-            "messages": [
-                {"role": "system", "content": "You are a research iteration planner."},
-                {"role": "user", "content": prompt},
+                {
+                    "role": "system",
+                    "content": OBJECTIVE_IDENTIFICATION_PROMPT.format(
+                        current_date=current_date, research_goal=research_goal
+                    )
+                },
+                {"role": "user", "content": f"Identify research objectives for: {query}"},
             ],
             "stream": False,
         }
@@ -338,12 +392,191 @@ class Tools:
         resp = await generate_chat_completion(request=request, form_data=payload, user=user)
         response_text = resp["choices"][0]["message"]["content"]
 
-        # Extract queries - try multiple methods
-        queries = []
+        # Extract objectives - try multiple methods
+        objectives = []
 
         # Method 1: Look for JSON array
         for line in response_text.split("\n"):
-            if "QUERIES:" in line.upper() and "[" in line and "]" in line:
+            if "OBJECTIVES:" in line.upper() and "[" in line:
+                try:
+                    obj_part = line.split("OBJECTIVES:")[-1].strip()
+                    objectives = json.loads(obj_part)
+                    break
+                except json.JSONDecodeError:
+                    pass
+
+        # Method 2: Look for full JSON array in text
+        if not objectives:
+            json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    objectives = json.loads(json_match.group(0))
+                except json.JSONDecodeError:
+                    pass
+
+        # Method 3: Extract quoted strings
+        if not objectives:
+            quoted = re.findall(r'"([^"]+)"', response_text)
+            if quoted:
+                objectives = [q for q in quoted if len(q) > 10]
+
+        # Method 4: Look for numbered list
+        if not objectives:
+            lines = response_text.split("\n")
+            for line in lines:
+                if re.match(r'^\s*\d+\.', line):
+                    obj = re.sub(r'^\s*\d+\.\s*', '', line).strip()
+                    if len(obj) > 10:
+                        objectives.append(obj)
+
+        # Fallback
+        if not objectives:
+            objectives = [
+                f"Research aspect 1 of: {query}",
+                f"Research aspect 2 of: {query}"
+            ]
+
+        return objectives
+
+    # ========================================================================
+    # Phase 3: Sub-Agent Research
+    # ========================================================================
+
+    async def _run_sub_agent(
+        self,
+        objective: str,
+        research_goal: str,
+        current_date: str,
+        agent_id: int,
+        total_agents: int,
+        status_func,
+        request,
+        user
+    ) -> SubAgentFindings:
+        """
+        Run a single sub-agent that conducts research on a specific objective.
+
+        This sub-agent will:
+        1. Conduct up to max_rounds of research
+        2. Reason about what information is still needed
+        3. Generate targeted search queries
+        4. Gather and analyze content
+        5. Return comprehensive findings
+        """
+        await status_func(f"🤖 Agent {agent_id}/{total_agents} starting: {objective[:40]}...")
+
+        all_content = []
+        sources = []
+        previous_findings = "No previous findings yet."
+
+        for round_num in range(1, self.valves.sub_agent_max_rounds + 1):
+            await status_func(
+                f"🤖 Agent {agent_id}/{total_agents} - Round {round_num}/{self.valves.sub_agent_max_rounds}"
+            )
+
+            # Step 1: Reason about what to search
+            queries = await self._sub_agent_reasoning(
+                objective=objective,
+                research_goal=research_goal,
+                previous_findings=previous_findings,
+                current_round=round_num,
+                max_rounds=self.valves.sub_agent_max_rounds,
+                current_date=current_date,
+                request=request,
+                user=user
+            )
+
+            # Step 2: Execute searches in parallel
+            search_tasks = [
+                self._search_and_get_content(query, sources)
+                for query in queries
+            ]
+
+            round_content = await asyncio.gather(*search_tasks, return_exceptions=True)
+
+            # Filter out exceptions and empty results
+            valid_content = [
+                content for content in round_content
+                if not isinstance(content, Exception) and content
+            ]
+
+            all_content.extend(valid_content)
+
+            # Step 3: Conclude round - summarize and decide if we need more
+            if all_content:
+                conclusion = await self._sub_agent_conclude_round(
+                    objective=objective,
+                    all_content="\n\n".join(all_content),
+                    current_round=round_num,
+                    max_rounds=self.valves.sub_agent_max_rounds,
+                    current_date=current_date,
+                    request=request,
+                    user=user
+                )
+
+                # Extract findings and decision
+                findings = self._extract_field(conclusion, "FINDINGS:")
+                decision = self._extract_field(conclusion, "DECISION:")
+
+                previous_findings = findings
+
+                # If agent decides it's done, stop early
+                if decision == "FINISH" or round_num == self.valves.sub_agent_max_rounds:
+                    break
+
+        # Final summary for this sub-agent
+        final_findings = previous_findings if previous_findings != "No previous findings yet." else "\n\n".join(all_content)
+
+        await status_func(f"✓ Agent {agent_id}/{total_agents} complete")
+
+        return SubAgentFindings(
+            objective=objective,
+            rounds_completed=round_num,
+            findings_summary=final_findings,
+            sources_consulted=list(set(sources)),  # Unique sources
+            total_content_gathered=sum(len(c) for c in all_content)
+        )
+
+    async def _sub_agent_reasoning(
+        self,
+        objective: str,
+        research_goal: str,
+        previous_findings: str,
+        current_round: int,
+        max_rounds: int,
+        current_date: str,
+        request,
+        user
+    ) -> List[str]:
+        """Sub-agent reasons about what to search next."""
+        payload = {
+            "model": self.valves.sub_agent_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": SUB_AGENT_REASONING_PROMPT.format(
+                        current_date=current_date,
+                        objective=objective,
+                        research_goal=research_goal,
+                        current_round=current_round,
+                        max_rounds=max_rounds,
+                        previous_findings=previous_findings[:8000]
+                    )
+                },
+                {"role": "user", "content": "Generate targeted search queries for this round."},
+            ],
+            "stream": False,
+        }
+
+        resp = await generate_chat_completion(request=request, form_data=payload, user=user)
+        response_text = resp["choices"][0]["message"]["content"]
+
+        # Extract queries
+        queries = []
+
+        # Try to extract JSON array
+        for line in response_text.split("\n"):
+            if "QUERIES:" in line.upper() and "[" in line:
                 try:
                     query_part = line.split("QUERIES:")[-1].strip()
                     queries = json.loads(query_part)
@@ -351,49 +584,50 @@ class Tools:
                 except json.JSONDecodeError:
                     pass
 
-        # Method 2: Extract quoted strings
+        # Try full text JSON
         if not queries:
-            quoted_queries = re.findall(r'"([^"]*)"', response_text)
-            if quoted_queries:
-                queries = [q for q in quoted_queries if len(q) > 5]
+            json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    queries = json.loads(json_match.group(0))
+                except json.JSONDecodeError:
+                    pass
 
-        # Method 3: Look for list-style queries
+        # Extract quoted strings
         if not queries:
-            lines = response_text.split("\n")
-            for line in lines:
-                if line.strip().startswith(("-", "*", "1.", "2.", "3.")):
-                    query = line.strip().lstrip("-*123456789. ").strip()
-                    if len(query) > 10:
-                        queries.append(query)
+            queries = re.findall(r'"([^"]+)"', response_text)
 
         # Fallback
         if not queries:
-            queries = [f"detailed research iteration {iteration}"]
+            queries = [f"{objective} detailed information"]
 
-        return queries[:self.valves.queries_per_iteration]
+        return queries[:self.valves.queries_per_round]
 
-    async def _conclude_iteration(self, query: str, objectives: str, previous_findings: str, iteration_content: str, iteration: int, current_date: str, request, user) -> str:
-        """Conclude an iteration and decide next steps."""
-        conclusion_prompt = f"""
-        Research findings from iteration {iteration}:
-        {iteration_content}
-
-        User's original question: {query}
-        Research objectives: {objectives}
-        Previous findings summary: {previous_findings}
-
-        Analyze these findings and determine next steps.
-        """
-
+    async def _sub_agent_conclude_round(
+        self,
+        objective: str,
+        all_content: str,
+        current_round: int,
+        max_rounds: int,
+        current_date: str,
+        request,
+        user
+    ) -> str:
+        """Sub-agent concludes a research round."""
         payload = {
-            "model": self.valves.agent_model,
+            "model": self.valves.sub_agent_model,
             "messages": [
-                {"role": "system", "content": ITERATION_CONCLUSION_PROMPT.format(
-                    current_date=current_date,
-                    current_iteration=iteration,
-                    max_iterations=self.valves.max_iterations
-                )},
-                {"role": "user", "content": conclusion_prompt},
+                {
+                    "role": "system",
+                    "content": SUB_AGENT_CONCLUSION_PROMPT.format(
+                        current_date=current_date,
+                        objective=objective,
+                        current_round=current_round,
+                        max_rounds=max_rounds,
+                        all_content=all_content[:16000]
+                    )
+                },
+                {"role": "user", "content": "Summarize findings and decide next steps."},
             ],
             "stream": False,
         }
@@ -401,13 +635,48 @@ class Tools:
         resp = await generate_chat_completion(request=request, form_data=payload, user=user)
         return resp["choices"][0]["message"]["content"]
 
-    async def _synthesize_final_answer(self, query: str, research_summary: str, current_date: str, request, user) -> str:
-        """Synthesize final comprehensive answer."""
+    # ========================================================================
+    # Phase 4: Final Synthesis
+    # ========================================================================
+
+    async def _synthesize_all_findings(
+        self,
+        query: str,
+        research_goal: str,
+        all_findings: List[SubAgentFindings],
+        current_date: str,
+        request,
+        user
+    ) -> str:
+        """Synthesize findings from all sub-agents."""
+        # Format all agent findings
+        findings_text = []
+        for idx, finding in enumerate(all_findings, 1):
+            findings_text.append(
+                f"## Sub-Agent {idx} Findings\n"
+                f"**Objective:** {finding.objective}\n"
+                f"**Rounds Completed:** {finding.rounds_completed}\n"
+                f"**Sources Consulted:** {len(finding.sources_consulted)}\n"
+                f"**Content Gathered:** {finding.total_content_gathered:,} characters\n\n"
+                f"**Findings:**\n{finding.findings_summary}\n\n"
+                f"**Sources:**\n" + "\n".join(f"- {src}" for src in finding.sources_consulted[:10])
+            )
+
+        all_findings_text = "\n\n---\n\n".join(findings_text)
+
         payload = {
             "model": self.valves.synthesizer_model,
             "messages": [
-                {"role": "system", "content": FINAL_SYNTHESIS_PROMPT.format(current_date=current_date)},
-                {"role": "user", "content": f"User's original question: {query}\n\nResearch progression and findings:\n{research_summary}"},
+                {
+                    "role": "system",
+                    "content": FINAL_SYNTHESIS_PROMPT.format(
+                        current_date=current_date,
+                        user_query=query,
+                        research_goal=research_goal,
+                        all_agent_findings=all_findings_text[:30000]
+                    )
+                },
+                {"role": "user", "content": "Synthesize all findings into a comprehensive knowledge base."},
             ],
             "stream": False,
         }
@@ -415,7 +684,11 @@ class Tools:
         resp = await generate_chat_completion(request=request, form_data=payload, user=user)
         return resp["choices"][0]["message"]["content"]
 
-    async def _search_and_get_content(self, query: str, status_func, request, user) -> str:
+    # ========================================================================
+    # Helper Methods
+    # ========================================================================
+
+    async def _search_and_get_content(self, query: str, sources_list: List[str]) -> str:
         """Search and retrieve content for a query."""
         try:
             exa = self._exa_client()
@@ -440,14 +713,20 @@ class Tools:
             if not crawled_results.results:
                 return ""
 
-            # Extract content
+            # Extract content and track sources
             texts = []
             for res in crawled_results.results:
                 if res.text and res.text.strip():
+                    # Add source to tracking list
+                    if hasattr(res, 'url'):
+                        sources_list.append(res.url)
+
                     title = getattr(res, "title", "Unknown Source")
+                    url = getattr(res, "url", "")
                     text_summary = ' '.join(res.text.split()[:3000])
+
                     if text_summary:
-                        texts.append(f"From {title}: {text_summary}")
+                        texts.append(f"**Source:** {title} ({url})\n{text_summary}")
 
             return "\n\n".join(texts)
 

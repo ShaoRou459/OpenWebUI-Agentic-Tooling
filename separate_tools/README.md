@@ -82,16 +82,35 @@ await web_search("what's happening with AI?")     # Bad - not optimized
 
 ---
 
-### 3. **deep_research.py** - Deep Research Tool
-Comprehensive, multi-iteration research with iterative query generation.
+### 3. **deep_research.py** - Deep Research Tool (Multi-Agent)
+Comprehensive parallel multi-agent research system with independent specialized sub-agents.
 
 **Method:** `deep_research(query: str)`
 
 **Key Features:**
-- Conducts multiple iterations of research
-- Generates targeted search queries based on findings
-- Synthesizes comprehensive knowledge base
-- Best for complex, multi-faceted research questions
+- **Parallel Multi-Agent Architecture** - Launches multiple specialized sub-agents simultaneously
+- **AI-Defined Goals** - Coordinator model defines research goal and identifies objectives
+- **Independent Sub-Agents** - Each sub-agent researches a distinct objective (2-5 objectives)
+- **Iterative Reasoning** - Each sub-agent conducts up to 3 rounds of research with reasoning
+- **Comprehensive Synthesis** - Master synthesizer combines all findings into holistic knowledge base
+
+**Architecture:**
+```
+1. AI defines research goal
+   ↓
+2. Identifies 2-5 distinct research objectives
+   ↓
+3. Launches parallel sub-agents (one per objective)
+   ├─ Sub-Agent 1 → Rounds 1-3 → Findings
+   ├─ Sub-Agent 2 → Rounds 1-3 → Findings
+   ├─ Sub-Agent 3 → Rounds 1-3 → Findings
+   ├─ Sub-Agent 4 → Rounds 1-3 → Findings
+   └─ Sub-Agent 5 → Rounds 1-3 → Findings
+   ↓
+4. Synthesizer combines all findings
+   ↓
+5. Returns comprehensive knowledge base
+```
 
 **Example:**
 ```python
@@ -100,18 +119,30 @@ await deep_research("What are the latest developments in quantum computing and t
 
 **Configuration (Valves):**
 - `exa_api_key`: Your Exa API key
-- `agent_model`: Model for reasoning and query generation (default: gpt-4-turbo)
-- `synthesizer_model`: Model for final synthesis (default: gpt-4-turbo)
+- `coordinator_model`: Model for goal definition and objective identification (default: gpt-4-turbo)
+- `sub_agent_model`: Model for sub-agent reasoning and research (default: gpt-4-turbo)
+- `synthesizer_model`: Model for final synthesis of all findings (default: gpt-4-turbo)
+- `max_objectives`: Maximum number of parallel research objectives, 2-5 (default: 5)
+- `sub_agent_max_rounds`: Maximum research rounds per sub-agent (default: 3)
+- `queries_per_round`: Number of search queries per sub-agent round (default: 2)
 - `urls_per_query`: URLs to fetch per query (default: 5)
 - `urls_to_crawl`: URLs to crawl per query (default: 3)
-- `queries_per_iteration`: Queries per iteration (default: 3)
-- `max_iterations`: Maximum research iterations (default: 2)
 
 **Research Process:**
-1. Generate introductory query for context
-2. Set research objectives
-3. Iterative research with reasoning
-4. Final synthesis of all findings
+1. **Goal Definition** - AI analyzes question and defines research goal
+2. **Objective Identification** - AI identifies 2-5 distinct research areas
+3. **Parallel Research** - Multiple sub-agents research simultaneously:
+   - Each sub-agent focuses on one specific objective
+   - Each conducts up to 3 rounds of research
+   - Each round: reasoning → query generation → search → analysis
+   - Sub-agents work independently and in parallel
+4. **Final Synthesis** - Master synthesizer combines all sub-agent findings
+
+**When to Use:**
+- Complex questions requiring multiple perspectives
+- Multi-faceted topics needing comprehensive coverage
+- Research requiring deep domain exploration
+- Questions with multiple distinct components
 
 ---
 
