@@ -3,7 +3,7 @@ Title: Auto Tool Selector
 Description: A hybrid middleware that dynamically routes to all tools, applying special handling where needed.
 author: ShaoRou459
 author_url: https://github.com/ShaoRou459
-Version: 1.2.6
+Version: 1.2.7
 """
 
 from __future__ import annotations
@@ -25,6 +25,16 @@ from open_webui.models.users import Users
 from open_webui.models.tools import Tools
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.middleware import chat_web_search_handler
+
+# Import built-in image generation (try newer path first, fallback to older)
+try:
+    from open_webui.routers.images import image_generations, GenerateImageForm
+except ImportError:
+    try:
+        from open_webui.apps.images.main import image_generations, GenerateImageForm
+    except ImportError:
+        image_generations = None
+        GenerateImageForm = None
 
 # ─── System Prompts ───────────────────────────────────────────────────────────
 
@@ -484,122 +494,136 @@ async def _generate_prompt_and_desc(
 
 
 # ─── Special Tool Handlers ────────────────────────────────────────────────────
-async def flux_image_generation_handler(
+async def image_generation_handler(
     request: Any, body: dict, ctx: dict, user: Any, debug: Debug = None
 ) -> dict:
+    """
+    Image generation handler that uses OpenWebUI's built-in image generation pipeline.
+    Configure image generation settings in Admin Settings > Images.
+    """
     prompt: str = ctx.get("prompt") or get_last_user_message(body["messages"])
     description: str = ctx.get("description", "Image generated.")
-    image_gen_model: str = ctx.get("image_gen_model", "gpt-4o")
     emitter = ctx.get("__event_emitter__")
 
-    placeholder_id = str(uuid4())
-    placeholder = {"id": placeholder_id, "role": "assistant", "content": ""}
-    body["messages"].append(placeholder)
+    if debug:
+        debug.handler(f"Image generation request → {prompt[:80]}…")
 
+    # Check if built-in image generation is available
+    if image_generations is None or GenerateImageForm is None:
+        if debug:
+            debug.error("OpenWebUI built-in image generation not available")
+        fail = "❌ Image generation failed: Built-in image generation not available. Please check OpenWebUI version."
+        if emitter:
+            await emitter(
+                {
+                    "type": "status",
+                    "data": {"description": fail, "done": True},
+                }
+            )
+        return body
+
+    # Show status while generating
     if emitter:
-        await emitter({"type": "chat:message", "data": placeholder})
         await emitter(
             {
                 "type": "status",
                 "data": {
-                    "message_id": placeholder_id,
-                    "description": f'Generating image from prompt: "{prompt[:60]}..."',
+                    "description": f'Generating image: "{prompt[:60]}..."',
                     "done": False,
                 },
             }
         )
 
-    if debug:
-        debug.handler(f"Calling image generation with model '{image_gen_model}' → {prompt[:80]}…")
     try:
-        resp = await generate_chat_completion(
-            request=request,
-            form_data={
-                "model": image_gen_model,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-            },
-            user=user,
+        # Use OpenWebUI's built-in image generation
+        # This uses the settings configured in Admin Settings > Images
+        if debug:
+            debug.handler("Calling OpenWebUI built-in image_generations()")
+
+        images = await image_generations(
+            GenerateImageForm(prompt=prompt),
+            user,
         )
 
-        # Handle different response formats depending on model type
-        # Standard chat completion format (gpt-4o, etc.)
-        if "choices" in resp and resp["choices"]:
-            choice = resp["choices"][0]
-            if isinstance(choice, dict) and "message" in choice:
-                message = choice["message"]
-                if isinstance(message, dict):
-                    flux_reply = message.get("content", "")
-                else:
-                    # Handle case where message might be an object
-                    flux_reply = getattr(message, "content", str(message))
-            else:
-                flux_reply = str(choice)
-        # OpenAI Images API format (dall-e-3, gpt-image-1)
-        elif "data" in resp and resp["data"]:
-            # Images API returns {"data": [{"url": "...", "revised_prompt": "..."}]}
-            image_data = resp["data"][0]
-            if isinstance(image_data, dict):
-                flux_reply = image_data.get("url", "") or image_data.get("b64_json", "")
-            else:
-                flux_reply = str(image_data)
-        else:
-            # Fallback: try to extract any useful content
-            flux_reply = str(resp)
-            if debug:
-                debug.warning(f"Unexpected response format: {type(resp)}")
+        if debug:
+            debug.data("image_generations response", images, truncate=200)
 
-        if isinstance(flux_reply, str):
-            flux_reply = flux_reply.strip()
-        else:
-            flux_reply = str(flux_reply)
+        # Extract image URLs from response
+        # Response format is typically a list of dicts with 'url' or 'images' field
+        image_urls = []
+        if isinstance(images, list):
+            for img in images:
+                if isinstance(img, dict):
+                    if "url" in img:
+                        image_urls.append(img["url"])
+                    elif "images" in img:
+                        # Handle nested images list
+                        for nested_img in img["images"]:
+                            if isinstance(nested_img, dict) and "url" in nested_img:
+                                image_urls.append(nested_img["url"])
+                            elif isinstance(nested_img, str):
+                                image_urls.append(nested_img)
+                elif isinstance(img, str):
+                    image_urls.append(img)
+        elif isinstance(images, dict):
+            if "url" in images:
+                image_urls.append(images["url"])
+            elif "images" in images:
+                for img in images["images"]:
+                    if isinstance(img, dict) and "url" in img:
+                        image_urls.append(img["url"])
+                    elif isinstance(img, str):
+                        image_urls.append(img)
+            elif "data" in images:
+                # OpenAI format
+                for img in images["data"]:
+                    if isinstance(img, dict):
+                        image_urls.append(img.get("url") or img.get("b64_json", ""))
+
+        if not image_urls:
+            # Fallback: try to find any URL in the response
+            response_str = str(images)
+            url_matches = _URL_RE.findall(response_str)
+            image_urls = url_matches if url_matches else [response_str]
+            if debug:
+                debug.warning(f"Using fallback URL extraction, found: {len(image_urls)} URLs")
+
+        image_url = image_urls[0] if image_urls else ""
+
+        if debug:
+            debug.handler(f"✅ Image URL → {image_url}")
 
     except Exception as exc:
         if debug:
-            debug.error(f"Image generation error ({image_gen_model}) → {exc}")
+            debug.error(f"Image generation error → {exc}")
         fail = f"❌ Image generation failed: {exc}"
         if emitter:
             await emitter(
                 {
-                    "type": "replace",
-                    "data": {"message_id": placeholder_id, "content": fail},
-                }
-            )
-            await emitter(
-                {
                     "type": "status",
-                    "data": {
-                        "message_id": placeholder_id,
-                        "description": "Failed",
-                        "done": True,
-                    },
+                    "data": {"description": "Failed", "done": True},
                 }
             )
-        body["messages"].pop()
+        # Inject error into conversation so model can respond appropriately
+        body["messages"].append({"role": "system", "content": fail})
         return body
 
-    url_match = _URL_RE.search(flux_reply)
-    image_url = url_match.group(0) if url_match else flux_reply
-    if debug:
-        debug.handler(f"✅ Image URL → {image_url}")
-
+    # Clear status
     if emitter:
-        await emitter({"type": "delete", "data": {"message_id": placeholder_id}})
         await emitter(
             {
                 "type": "status",
-                "data": {"message_id": placeholder_id, "description": "", "done": True},
+                "data": {"description": "", "done": True},
             }
         )
 
-    body["messages"].pop()
-
+    # Inject image metadata into conversation for the model to embed
     meta = (
         "[IMAGE_GENERATED]\n"
         f"url: {image_url}\n"
         f"prompt: {prompt}\n"
         f"description: {description}\n"
-        f'[IMAGE_INSTRUCTION] Embed the generated image using ![description](url) and add a one-sentence caption."'
+        '[IMAGE_INSTRUCTION] Embed the generated image using ![description](url) and add a one-sentence caption.'
     )
     body["messages"].append({"role": "system", "content": meta})
     return body
@@ -718,10 +742,6 @@ class Filter:
             default=None,
             description="Optional vision model to describe images for context. If empty, images are ignored.",
         )
-        image_gen_model: Optional[str] = Field(
-            default="gpt-4o",
-            description="Model to use for image generation. Use a model that supports image output (e.g., gpt-4o, gpt-4o-mini, dall-e-3). Note: gpt-image-1 uses a different API format and may not be compatible.",
-        )
         history_char_limit: int = Field(
             default=500,
             description="Max characters per message in the history snippet.",
@@ -751,7 +771,7 @@ class Filter:
         self.user_valves = self.UserValves()
         self.debug = Debug(enabled=False)  # Will be updated when valves change
         self.special_handlers = {
-            "image_generation": flux_image_generation_handler,
+            "image_generation": image_generation_handler,
             "code_interpreter": code_interpreter_handler,
             "memory": memory_handler,
             # Use a local wrapper to normalize signature and prevent arg mismatches
@@ -1060,7 +1080,6 @@ class Filter:
                 )
                 ctx["prompt"] = prompt
                 ctx["description"] = desc
-                ctx["image_gen_model"] = self.valves.image_gen_model or "gpt-4o"
             elif decision == "code_interpreter":
                 # Pass the valve setting to determine which code interpreter to use
                 return await handler(
