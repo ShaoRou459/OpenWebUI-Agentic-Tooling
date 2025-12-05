@@ -3,7 +3,7 @@ Title: Auto Tool Selector
 Description: A hybrid middleware that dynamically routes to all tools, applying special handling where needed.
 author: ShaoRou459
 author_url: https://github.com/ShaoRou459
-Version: 1.2.5
+Version: 1.2.6
 """
 
 from __future__ import annotations
@@ -489,6 +489,7 @@ async def flux_image_generation_handler(
 ) -> dict:
     prompt: str = ctx.get("prompt") or get_last_user_message(body["messages"])
     description: str = ctx.get("description", "Image generated.")
+    image_gen_model: str = ctx.get("image_gen_model", "gpt-4o")
     emitter = ctx.get("__event_emitter__")
 
     placeholder_id = str(uuid4())
@@ -509,21 +510,53 @@ async def flux_image_generation_handler(
         )
 
     if debug:
-        debug.handler(f"Calling Flux with prompt → {prompt[:80]}…")
+        debug.handler(f"Calling image generation with model '{image_gen_model}' → {prompt[:80]}…")
     try:
         resp = await generate_chat_completion(
             request=request,
             form_data={
-                "model": "gpt-4o-image",
+                "model": image_gen_model,
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
             },
             user=user,
         )
-        flux_reply = resp["choices"][0]["message"]["content"].strip()
+
+        # Handle different response formats depending on model type
+        # Standard chat completion format (gpt-4o, etc.)
+        if "choices" in resp and resp["choices"]:
+            choice = resp["choices"][0]
+            if isinstance(choice, dict) and "message" in choice:
+                message = choice["message"]
+                if isinstance(message, dict):
+                    flux_reply = message.get("content", "")
+                else:
+                    # Handle case where message might be an object
+                    flux_reply = getattr(message, "content", str(message))
+            else:
+                flux_reply = str(choice)
+        # OpenAI Images API format (dall-e-3, gpt-image-1)
+        elif "data" in resp and resp["data"]:
+            # Images API returns {"data": [{"url": "...", "revised_prompt": "..."}]}
+            image_data = resp["data"][0]
+            if isinstance(image_data, dict):
+                flux_reply = image_data.get("url", "") or image_data.get("b64_json", "")
+            else:
+                flux_reply = str(image_data)
+        else:
+            # Fallback: try to extract any useful content
+            flux_reply = str(resp)
+            if debug:
+                debug.warning(f"Unexpected response format: {type(resp)}")
+
+        if isinstance(flux_reply, str):
+            flux_reply = flux_reply.strip()
+        else:
+            flux_reply = str(flux_reply)
+
     except Exception as exc:
         if debug:
-            debug.error(f"Flux error → {exc}")
+            debug.error(f"Image generation error ({image_gen_model}) → {exc}")
         fail = f"❌ Image generation failed: {exc}"
         if emitter:
             await emitter(
@@ -548,7 +581,7 @@ async def flux_image_generation_handler(
     url_match = _URL_RE.search(flux_reply)
     image_url = url_match.group(0) if url_match else flux_reply
     if debug:
-        debug.handler(f"✅ Flux URL → {image_url}")
+        debug.handler(f"✅ Image URL → {image_url}")
 
     if emitter:
         await emitter({"type": "delete", "data": {"message_id": placeholder_id}})
@@ -684,6 +717,10 @@ class Filter:
         vision_model: Optional[str] = Field(
             default=None,
             description="Optional vision model to describe images for context. If empty, images are ignored.",
+        )
+        image_gen_model: Optional[str] = Field(
+            default="gpt-4o",
+            description="Model to use for image generation. Use a model that supports image output (e.g., gpt-4o, gpt-4o-mini, dall-e-3). Note: gpt-image-1 uses a different API format and may not be compatible.",
         )
         history_char_limit: int = Field(
             default=500,
@@ -1023,6 +1060,7 @@ class Filter:
                 )
                 ctx["prompt"] = prompt
                 ctx["description"] = desc
+                ctx["image_gen_model"] = self.valves.image_gen_model or "gpt-4o"
             elif decision == "code_interpreter":
                 # Pass the valve setting to determine which code interpreter to use
                 return await handler(
