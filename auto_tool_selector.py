@@ -595,9 +595,19 @@ async def image_generation_handler(
             debug.handler(f"✅ Image URL → {image_url}")
 
     except Exception as exc:
+        error_msg = str(exc)
         if debug:
             debug.error(f"Image generation error → {exc}")
-        fail = f"❌ Image generation failed: {exc}"
+
+        # Provide helpful error messages for common issues
+        if "Expecting value" in error_msg or "JSONDecodeError" in error_msg:
+            fail = "❌ Image generation failed: Empty or invalid response from image backend. Please check Admin Settings > Images configuration."
+        elif "401" in error_msg or "unauthorized" in error_msg.lower():
+            fail = "❌ Image generation failed: Authentication error. Please check your API key in Admin Settings > Images."
+        elif "404" in error_msg or "not found" in error_msg.lower():
+            fail = "❌ Image generation failed: Image generation endpoint not found. Please verify your image backend settings."
+        else:
+            fail = f"❌ Image generation failed: {exc}"
         if emitter:
             await emitter(
                 {
