@@ -541,8 +541,9 @@ async def image_generation_handler(
             debug.handler("Calling OpenWebUI built-in image_generations()")
 
         images = await image_generations(
-            GenerateImageForm(prompt=prompt),
-            user,
+            request=request,
+            form_data=GenerateImageForm(prompt=prompt),
+            user=user,
         )
 
         if debug:
