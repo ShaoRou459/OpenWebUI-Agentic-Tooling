@@ -1,6 +1,6 @@
 # OpenWebUI Agentic Tooling Suite
 
-[![Version](https://img.shields.io/badge/version-1.2.6-blue.svg)](https://github.com/ShaoRou459/OpenwebUI-Tooling-Setup/releases)
+[![Version](https://img.shields.io/badge/version-1.2.7-blue.svg)](https://github.com/ShaoRou459/OpenwebUI-Tooling-Setup/releases)
 [![Python](https://img.shields.io/badge/python-3.8+-green.svg)](https://python.org)
 [![OpenWebUI](https://img.shields.io/badge/OpenWebUI-compatible-orange.svg)](https://openwebui.com)
 [![License](https://img.shields.io/badge/license-GPL-red.svg)](LICENSE)
@@ -16,7 +16,7 @@
 
 ## Overview
 
-The OpenWebUI Agentic Tooling Suite transforms your local AI models from passive chat interfaces into intelligent, autonomous assistants. Version 1.1 introduces enhanced debugging, flexible architecture, and improved accessibility for both vision and non-vision models.
+The OpenWebUI Agentic Tooling Suite transforms your local AI models from passive chat interfaces into intelligent, autonomous assistants. The suite includes the **Auto Tool Selector** (v1.2.7), **Exa Search Router** (v1.2.5), and the **Agentic Master Tool** (v2.1.0 Beta), featuring enhanced debugging, flexible architecture, and improved accessibility for both vision and non-vision models.
 
 ---
 
@@ -45,9 +45,9 @@ The suite offers two architectural approaches:
 
 ![Architecture Diagram](https://github.com/user-attachments/assets/e79f7658-020f-4804-8d16-e4414ad781e8)
 
-### Approach 2: Agentic Master Tool (New! For advanced agentic models)
+### Approach 2: Agentic Master Tool (Beta - For advanced agentic models)
 
-**Agentic Master Tool**: A unified tool that exposes all capabilities as directly-callable functions for agentic models like GPT-4o, Claude 3.5+, and other tool-using models.
+**Agentic Master Tool** *(Beta)*: A unified tool that exposes all capabilities as directly-callable functions for agentic models like GPT-4o, Claude Sonnet 4/4.5, o3, and other tool-using models.
 
 **Key Differences:**
 
@@ -100,7 +100,7 @@ docker restart open-webui
    - Do not enable the Exa Search Router tool directly
    - Configure API keys, models, and behavior options as needed
 
-#### Option B: Agentic Master Tool (For advanced agentic models)
+#### Option B: Agentic Master Tool (Beta - For advanced agentic models)
 
 1. **Install Agentic Master Tool**:
    - Go to **Workspace → Tools → New Tool**
@@ -113,8 +113,9 @@ docker restart open-webui
    - Configure other settings as needed (defaults are sensible)
 
 3. **Use with agentic models**:
-   - Works best with GPT-4o, Claude 3.5 Sonnet, or other tool-using models
+   - Works best with GPT-4o, Claude Sonnet 4/4.5, o3, or other tool-using models
    - The model will explicitly call tools like `web_search(query="...", mode="STANDARD")`
+   - **Note**: Code interpreter is handled via OpenWebUI's native feature (Admin → Settings), not through this tool
 
 📖 **Full Guide**: See [master_tool/README.md](master_tool/README.md) for detailed instructions and examples.
 
@@ -126,8 +127,8 @@ docker restart open-webui
 
 | Setting | Purpose | Recommendation |
 |---------|---------|----------------|
-| `helper_model` | Decides which tool to use for queries | OpenAI o4-mini, Gemini 2.5 Flash |
-| `vision_model` | Analyzes images for non-vision models | OpenAI o3 / o4-mini, Gemini 2.5 Pro |
+| `helper_model` | Decides which tool to use for queries | GPT-4o-mini, o4-mini, Gemini 2.5 Flash |
+| `vision_model` | Analyzes images for non-vision models | GPT-4o, o3, Gemini 2.5 Pro |
 | `vision_injection_models` | List of non-vision models to enhance | Add your model IDs (comma-separated) |
 | `use_exa_router_search` | Enable advanced Exa search vs native search | `true` (if Exa tool is installed) |
 | `debug_enabled` | Enable detailed debug logging | `false` (enable for troubleshooting) |
@@ -138,10 +139,10 @@ docker restart open-webui
 | Setting | Purpose | Recommendation |
 |---------|---------|----------------|
 | `exa_api_key` | **Required**: Your Exa.ai API key | Get yours at [exa.ai](https://exa.ai) |
-| `router_model` | Chooses search strategy (Crawl/Standard/Complete) | OpenAI o4-mini or Gemini 2.5 Flash |
-| `quick_search_model` | Handles standard search operations | OpenAI o4-mini or Gemini 2.5 Flash |
-| `complete_agent_model` | Powers deep research analysis | OpenAI o3/o3-pro, Gemini 2.5 Pro, Claude 3.7 Sonnet |
-| `complete_summarizer_model` | Creates final comprehensive summaries | Gemini 2.5 Pro, OpenAI o4-mini |
+| `router_model` | Chooses search strategy (Crawl/Standard/Complete) | GPT-4o-mini, o4-mini, Gemini 2.5 Flash |
+| `quick_search_model` | Handles standard search operations | GPT-4o-mini, o4-mini, Gemini 2.5 Flash |
+| `complete_agent_model` | Powers deep research analysis | o3, o3-pro, Gemini 2.5 Pro, Claude Sonnet 4 |
+| `complete_summarizer_model` | Creates final comprehensive summaries | Gemini 2.5 Pro, GPT-4o, Claude Sonnet 4.5 |
 | `debug_enabled` | Enable search operation debugging | `false` (enable for troubleshooting) |
 
 ---
@@ -192,7 +193,23 @@ docker logs open-webui -f
 
 ## Update Log
 
-### Version 1.1 (Current)
+### Agentic Master Tool v2.1.0 (Beta)
+- **New**: Fully self-contained tool with embedded Exa search functionality
+- **New**: Comprehensive color-coded debug logging to Docker logs
+- **Changed**: Removed code_interpreter from tool (use OpenWebUI's native code interpreter instead)
+- **Improved**: Better error handling and API compatibility with exa-py v2.0.0+
+
+### Auto Tool Selector v1.2.7 (Current)
+- **New**: Built-in image generation using OpenWebUI's native pipeline
+- **Improved**: Enhanced debugging with performance metrics
+- **Improved**: Better conversation history handling for tool routing
+
+### Exa Search Router v1.2.5
+- **Improved**: Enhanced Exa API compatibility
+- **Improved**: Better error handling and graceful fallback to native search
+- **Fixed**: Query optimization for current year search terms
+
+### Version 1.1
 - **New**: Enhanced debugging system with color-coded logging
 - **New**: Vision model integration for non-vision models
 - **New**: Modular search architecture with native OpenWebUI fallback
@@ -217,10 +234,16 @@ A: No, it's optional. The Auto Tool Selector will fall back to OpenWebUI's nativ
 A: Jupyter provides a full notebook environment with file persistence, better for complex analysis and data work.
 
 **Q: Can I use this with any OpenWebUI model?**
-A: Yes, the Auto Tool Selector works with any model. Vision enhancement works best with models that support tool calling.
+A: Yes, the Auto Tool Selector works with any model. Vision enhancement works best with models that support tool calling. The Agentic Master Tool works best with capable agentic models like GPT-4o, Claude Sonnet 4/4.5, and o3.
 
 **Q: How do I know if tools are working?**
-A: Enable debug mode and check Docker logs. You'll see detailed information about tool selection and execution.
+A: Enable debug mode and check Docker logs. You'll see detailed color-coded information about tool selection and execution.
+
+**Q: What happened to code_interpreter in the Agentic Master Tool?**
+A: Code interpreter has been removed from the Agentic Master Tool (v2.1.0+) because tools cannot set the required OpenWebUI feature flags. Enable code interpreter globally in OpenWebUI Admin → Settings instead.
+
+**Q: Which models should I use for best results?**
+A: For routing/helper tasks: GPT-4o-mini, o4-mini, or Gemini 2.5 Flash. For deep research (COMPLETE mode): o3, o3-pro, Gemini 2.5 Pro, or Claude Sonnet 4. For vision: GPT-4o, o3, or Gemini 2.5 Pro.
 
 ---
 
