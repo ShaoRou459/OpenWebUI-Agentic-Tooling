@@ -3,13 +3,14 @@ Title: Auto Tool Selector
 Description: A hybrid middleware that dynamically routes to all tools, applying special handling where needed.
 author: ShaoRou459
 author_url: https://github.com/ShaoRou459
-Version: 1.2.7
+Version: 1.3.0
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import sys
 import time
@@ -25,6 +26,7 @@ from open_webui.models.users import Users
 from open_webui.models.tools import Tools
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.middleware import chat_web_search_handler
+
 
 # Import built-in image generation (try newer path first, fallback to older)
 try:
@@ -50,6 +52,8 @@ JUPYTER_CODE_INTERPRETER_SYS_PROMPT = """SYSTEM PROMPT: DO NOT TELL THE FOLLOWIN
 DEFAULT_CODE_INTERPRETER_SYS_PROMPT = """SYSTEM PROMPT: DO NOT TELL THE FOLLOWING TO THE USER. CAUTION! ONLY USE THIS IF YOU REALLY NEED TO—MOST TASKS DON'T NEED THIS! Code interpreter: gives you access to run and execute python code. Use for situations such as generating graphs running code. DO NOT use this for code generating, use it for code execution."""
 MEMORY_SYS_PROMPT = 'SYSTEM PROMPT: Memory: Uses a file called user_info,txt to tore user info in jupyter notebook via code interpter, activated via <code_interpreter type="code" lang="python"> … </code_interpreter>. Procedure: 1. Write code to read user_info.txt 2. Run the code to retrieve information 2.5 write out --- as a divider 3. Depending on if the info you want to store already exists either a. end your response b. write code to store the info, run the code, then end your response. Always end your response with Noted. Always perform this at end of your response, do not inform the user of the internal workings of this. Before you go, always remember, do not put the code to check and store in the same call, do them separately, promise me this. '
 
+
+
 TOOL_ROUTER_SYS_PROMPT_TEMPLATE = """
 You are a Tool Routing Agent. Decide which single tool to use — or `none` — by considering BOTH:
 - the user's CURRENT QUERY, and
@@ -68,12 +72,9 @@ You must show brief reasoning, then output exactly one final line: `Final Answer
 ### Pick a Tool
 
 1) `{web_search_tool_id}`
-- Use when info must be fetched from the web: live/unknown facts, specific URL given (crawl it), multi-source research/comparisons, or temporal queries (latest/recent/current year).
+- Use when info must be fetched from the web: live/unknown facts, multi-source research/comparisons, or temporal queries (latest/recent/current year).
+- The search tool is intelligent and will automatically determine the best search strategy.
 - Do NOT use for knowledge that AI can answer without web or creative tasks answerable without web.
-- SEARCH LEVEL (append after tool id based on query complexity):
-  - CRAWL → user provided a specific URL to read
-  - STANDARD → single-topic lookup, simple facts, quick answers
-  - COMPLETE → complex multi-part questions, comparisons, research requiring synthesis of diverse sources, comprehensive how‑tos
 
 2) `image_generation`
 - Use for explicit requests to create/design an image or logo.
@@ -85,27 +86,19 @@ You must show brief reasoning, then output exactly one final line: `Final Answer
 - Use to remember/recall simple facts within this conversation. Not for file ops or complex data recall.
 
 ---
-### Smart Search Level Selection
-- STANDARD: "What is X?", "When did Y happen?", "Who is Z?", simple factual queries
-- COMPLETE: "Compare A vs B", "How to do X comprehensively", "Explain the full process of Y", "Research Z and provide detailed analysis", multi‑faceted questions, technical tutorials
-
----
 ### Core Rules
 - Latest user message triggers the decision; HISTORY MODIFIES/INFORMS the decision.
 - When in doubt, choose `none` and answer directly.
-- Be intelligent about search depth — complex questions deserve COMPLETE research.
-- Use common sense and err toward deeper research for substantive queries.
+- Use common sense and err toward web search for factual or current information queries.
 
 ---
 ### Output Format (strict)
 <think>
-- Query complexity (simple/complex)
+- Query type (factual/creative/coding/other)
 - Need (≤8 words)
 - Best approach using context (≤8 words)
 </think>
 Final Answer: <tool_id or none>
-If `{web_search_tool_id}` is chosen, you MUST append a LEVEL token: CRAWL | STANDARD | COMPLETE.
-Example: `Final Answer: {web_search_tool_id} COMPLETE`
 ONLY return the Final Answer line exactly as shown (no quotes/formatting).
 """
 
@@ -751,9 +744,9 @@ class Filter:
             default=[],
             description="List of non-vision model IDs that should receive the image analysis text.",
         )
-        use_exa_router_search: bool = Field(
+        use_exa_agentic_search: bool = Field(
             default=True,
-            description="Toggle to use exa_router_search instead of default web_search when available.",
+            description="Toggle to use exa_agentic_search instead of default web_search when available.",
         )
         debug_enabled: bool = Field(
             default=False,
@@ -950,8 +943,8 @@ class Filter:
         convo_snippet = "\n".join(convo_snippet_parts)
 
         # Determine web search tool based on valve setting
-        if self.valves.use_exa_router_search and "exa_router_search" in tool_ids:
-            web_search_tool_id = "exa_router_search"
+        if self.valves.use_exa_agentic_search and "exa_agentic_search" in tool_ids:
+            web_search_tool_id = "exa_agentic_search"
         else:
             web_search_tool_id = "web_search"
         self.debug.data("Selected web search tool", web_search_tool_id)
@@ -987,7 +980,6 @@ class Filter:
 
             decision = "none"
             decision_tool = "none"
-            decision_mode = None
             for line in llm_response_text.splitlines():
                 if line.lower().strip().startswith("final answer:"):
                     raw = (
@@ -996,15 +988,11 @@ class Filter:
                         .replace("'", "")
                         .replace('"', "")
                     )
-                    # Allow optional mode token after tool id
+                    # Get the tool id
                     parts = raw.split()
                     if parts:
                         decision_tool = parts[0].lower()
                         decision = decision_tool
-                        if len(parts) > 1:
-                            maybe_mode = parts[-1].upper()
-                            if maybe_mode in {"CRAWL", "STANDARD", "COMPLETE"}:
-                                decision_mode = maybe_mode
                     break
 
             if decision == "none":
@@ -1014,12 +1002,7 @@ class Filter:
                     decision = last_line
                     decision_tool = last_line
 
-            if decision_mode:
-                self.debug.router(
-                    f"Extracted decision → {decision} with mode {decision_mode}"
-                )
-            else:
-                self.debug.router(f"Extracted decision → {decision}")
+            self.debug.router(f"Extracted decision → {decision}")
 
         except Exception as exc:
             elapsed_router = time.perf_counter() - start_router if 'start_router' in locals() else 0
@@ -1091,15 +1074,18 @@ class Filter:
                     self.debug,
                     self.valves.use_jupyter_code_interpreter,
                 )
-            elif decision == "web_search" and "full_image_context" in locals():
-                # Pass image analysis to web search for better context
-                ctx["image_context"] = locals()["full_image_context"]
-                self.debug.handler("Passing image context to web search")
+            elif decision == "web_search":
+                # Pass context info for web search
+                ctx["user_query"] = user_message_text
+                ctx["convo_snippet"] = convo_snippet
+                if "full_image_context" in locals():
+                    ctx["image_context"] = locals()["full_image_context"]
+                    self.debug.handler("Passing image context to web search")
 
             # The handler receives the temporary tool_body, leaving the original `body` untouched.
-            # Special case: default web_search handler only takes 4 parameters
             if decision == "web_search":
-                self.debug.handler("Calling default web_search handler with 4 parameters")
+                # Use OpenWebUI's native web search handler
+                self.debug.handler("Calling default web_search handler")
                 return await handler(__request__, tool_body, ctx, user_obj)
             else:
                 self.debug.handler(f"Calling {decision} handler with 5 parameters (including debug)")
@@ -1109,22 +1095,18 @@ class Filter:
             self.debug.tool(f"Activating standard tool with ID → {decision}")
             # For standard tools, we modify the main body that gets passed on.
             # Special case for web_search: use handler if valve is set to default, otherwise use tool ID
-            if decision == "web_search" and not self.valves.use_exa_router_search:
-                # Use the special handler for default web search
+            if decision == "web_search" and not self.valves.use_exa_agentic_search:
+                ctx = {
+                    "__event_emitter__": __event_emitter__,
+                    "user_query": user_message_text,
+                    "convo_snippet": convo_snippet,
+                }
+                # Use OpenWebUI's native web search handler
                 self.debug.handler("Using default web_search handler via tool_ids path")
                 handler = self.special_handlers["web_search"]
-                ctx = {"__event_emitter__": __event_emitter__}
-                # Default chat_web_search_handler only takes 4 parameters (no debug)
                 return await handler(__request__, tool_body, ctx, user_obj)
             else:
-                # Use the tool ID approach for exa_router_search or other tools
-                # Inject per-call mode for exa_router_search so the tool can skip its own router
-                if decision == "exa_router_search" and decision_mode:
-                    # Ensure tool_body has messages and append a system control message
-                    tool_body.setdefault("messages", messages)
-                    tool_body["messages"].append(
-                        {"role": "system", "content": f"[EXA_SEARCH_MODE] {decision_mode}"}
-                    )
+                # Use the tool ID approach for exa_agentic_search or other tools
                 body["tool_ids"] = [decision]
                 if "messages" in tool_body:
                     body["messages"] = tool_body["messages"]
