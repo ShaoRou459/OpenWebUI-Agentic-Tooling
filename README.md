@@ -149,25 +149,6 @@ docker logs open-webui -f
 
 ---
 
-## Update Log
-
-### Exa Agentic Search v2.0.0 (Current) 🆕
-- **New**: Complete rewrite with agentic architecture—AI controls all search parameters
-- **New**: Iterative research with intelligent stopping criteria
-- **New**: Standardized output format (EXTRACTED_INFO → EVALUATION → DECISION → SEARCH_CONFIG)
-- **New**: Redesigned debug system with clean session summaries and metrics
-- **Improved**: Single API call efficiency with `search_and_contents`
-- **Replaces**: `exa_router_search.py` (now deprecated)
-
-### Auto Tool Selector v1.3.0 (Current)
-- **Improved**: Better LLM response parsing with JSONResponse support
-- **Improved**: Enhanced retry logic with exponential backoff
-- **Improved**: Better conversation history handling for tool routing
-
-### Previous Versions
-- See [RELEASE_NOTES.md](RELEASE_NOTES.md) for full version history
-
----
 
 ## FAQ
 
