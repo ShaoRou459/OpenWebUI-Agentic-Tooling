@@ -10,8 +10,7 @@
 
 📦 **OpenWebUI Marketplace**: [Auto Tool Router](https://openwebui.com/posts/auto_tool_selecter_add9aede) | [Exa Agentic Search](https://openwebui.com/t/sdjfhsud/exa_router_search)
 
-[中文 Readme](https://github.com/ShaoRou459/OpenwebUI-Tooling-Setup/blob/main/README_zh.md) | [Quick Start](#installation--setup) | [Configuration Guide](#configuration) | [Release Notes](RELEASE_NOTES.md)
-
+[中文 Readme](https://github.com/ShaoRou459/OpenwebUI-Tooling-Setup/blob/main/README_zh.md) | [Quick Start](#installation--setup) | [Configuration Guide](#configuration)
 ---
 
 ## Overview
