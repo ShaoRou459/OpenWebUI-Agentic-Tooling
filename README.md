@@ -25,7 +25,7 @@ The OpenWebUI Agentic Tooling Suite transforms your local AI models from passive
 |---------|-------------|
 | **Autonomous Tool Selection** | Automatically routes user queries to the most appropriate tool without manual intervention |
 | **Agentic Search** | Intelligent iterative search with agent-controlled parameters—adapts search strategy based on query complexity |
-| **Intelligent Image Generation** | Auto-optimizes prompts and seamlessly integrates generated images into conversations |
+| **Intelligent Image Generation & Editing** | Auto-optimizes prompts, supports image-to-image editing when images are attached, and seamlessly integrates results into conversations |
 | **Dual Code Execution** | Support for both Jupyter notebooks and basic Python code interpretation |
 | **Universal Vision** | Non-vision models gain image understanding through automatic transcription |
 | **Advanced Debugging** | Comprehensive logging system with session summaries and metrics |
@@ -89,6 +89,7 @@ docker restart open-webui
 | `use_exa_agentic_search` | Enable agentic Exa search vs native search | `true` (if Exa tool is installed) |
 | `debug_enabled` | Enable detailed debug logging | `false` (enable for troubleshooting) |
 | `use_jupyter_code_interpreter` | Use Jupyter vs basic code execution | `true` (recommended) |
+| `pass_attached_images_to_image_generation` | Pass attached image(s) into OpenWebUI's image edit/img2img flow for image-generation requests | `true` (recommended) |
 
 ### Exa Agentic Search Settings *(If Installed)*
 
@@ -112,6 +113,9 @@ User: "What's the latest news about AI developments today?"
 User: "Create a logo for my coffee shop called 'Morning Brew'"
 → Automatically routes to image generation, optimizes prompt, generates and displays image
 
+User: "Take this uploaded product photo and turn it into a premium ad shot"
+→ Automatically routes to image generation, passes the attached image into OpenWebUI's image edit/img2img pipeline, and displays the edited result
+
 User: "Analyze this sales data and create a visualization"
 → Automatically routes to code interpreter, processes data, creates charts
 ```
@@ -126,6 +130,9 @@ The new Exa Agentic Search automatically adapts its search strategy based on que
 
 ### Vision Enhancement
 Non-vision models can now process images when you include them in your messages. The system automatically describes images and provides that context to the model.
+
+### Image Editing / Image-to-Image
+If you attach image(s) and ask for an edit, variation, restyle, or composite, the Auto Tool Selector will still route to `image_generation`, but it will pass those attached image(s) into OpenWebUI's built-in image edit/img2img pipeline when available. This works well with newer image-capable models such as GPT-Image and Gemini image models, provided your OpenWebUI Images settings are configured with a backend/model that supports image editing.
 
 ---
 

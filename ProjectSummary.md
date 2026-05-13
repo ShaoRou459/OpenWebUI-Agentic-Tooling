@@ -19,7 +19,7 @@ This project provides intelligent tool routing and autonomous AI capabilities fo
 
 **Key Capabilities:**
 - **Intelligent Routing:** Uses an LLM to analyze queries and route to the appropriate handler
-- **Image Generation:** Integrates with OpenWebUI's native image generation pipeline
+- **Image Generation & Editing:** Integrates with OpenWebUI's native image generation pipeline and supports image-to-image editing when images are attached
 - **Code Interpreter:** Supports both Jupyter notebook and basic Python execution modes
 - **Vision Enhancement:** Allows non-vision models to understand images by transcribing them via a vision model
 - **Memory Handler:** Stores/retrieves user information via code interpreter
@@ -38,6 +38,7 @@ This project provides intelligent tool routing and autonomous AI capabilities fo
 - `vision_injection_models` - List of model IDs to receive image transcriptions
 - `use_exa_router_search` - Toggle between Exa and native web search
 - `use_jupyter_code_interpreter` - Toggle Jupyter vs basic code execution
+- `pass_attached_images_to_image_generation` - Toggle passthrough of attached images into OpenWebUI's image edit/img2img pipeline
 - `debug_enabled` - Enable detailed logging
 
 ---

@@ -11,6 +11,7 @@
 本项目给本地模型装上“自动驾驶”：  
 - 两层智能路由，自动决定要不要搜索、画图、跑代码 
 - 体验直接对标 ChatGPT / Gemini 的联网、画图、代码执行能力
+- 现在支持附图后的图片编辑 / 图生图请求
 - 未来添加跟多工具的能力
 
 ---
@@ -23,7 +24,7 @@
 • **Crawl** 直接读指定网页  
 • **Quick** 5 秒内给摘要答案  
 • **Complete** 深度研究，多轮搜索+总结 |
-| **智能画图** | 自动优化提示词，生成更高质量图片，并能把图片信息再喂回对话 |
+| **智能画图 / 图片编辑** | 自动优化提示词；当你附带图片并提出编辑、变体、重绘或合成需求时，也可走图生图/图片编辑流程，并把结果无缝回注到对话 |
 | **代码解释器** | 支持原生解释器，也支持 Jupyter，可返回文件下载链接 |
 | **实时状态** | 每步操作都有提示，不让你干等 |
 
@@ -41,6 +42,7 @@ https://private-user-images.githubusercontent.com/212266166/468440945-696cb316-c
 | `vision_model` | 看图说话 | GPT-4.1 / Gemini 2.0 Flash |
 | `vision_injection_models` | 需要图片注解的非识图模型| |
 | `history_char_limit` | 保留多少历史字符，省 token | 默认即可 |
+| `pass_attached_images_to_image_generation` | 当用户请求画图且附带图片时，把这些图片传入 OpenWebUI 的图片编辑 / 图生图流程 | 推荐开启 |
 
 ### 3.2 搜索路由 Exa Search Router  
 | Valve | 作用 | 推荐 |
@@ -86,6 +88,9 @@ https://private-user-images.githubusercontent.com/212266166/468440945-696cb316-c
 - **不要** 直接勾选 `Exa Search Router`，否则主路由会失效
 
 ---
+
+### 4.1 图片编辑 / 图生图说明
+如果你上传了图片，并提出“修改这张图 / 参考这张图生成 / 把两张图合成 / 改成某种风格”之类的请求，主路由仍然会选择 `image_generation`，但底层会把附件图片一起传给 OpenWebUI 的原生图片编辑 / 图生图接口（如果当前配置的图片后端支持）。这类用法特别适合 GPT-Image、Gemini 图片模型，或支持 img2img / edit 的 ComfyUI、Automatic1111 后端。
 
 ## 5. 常见问题 FAQ  
 **Q1：为什么要手动装 `exa_py`？**  

@@ -9,40 +9,51 @@ Version: 1.3.0
 from __future__ import annotations
 
 import asyncio
+import copy
+import inspect
 import json
 import os
 import re
 import sys
 import time
-import copy
+from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
 from uuid import uuid4
-from datetime import datetime
-from fastapi import Request
-from pydantic import BaseModel, Field
 
-from open_webui.models.users import Users
+from fastapi import Request
 from open_webui.models.tools import Tools
+from open_webui.models.users import Users
 from open_webui.utils.chat import generate_chat_completion
 from open_webui.utils.middleware import chat_web_search_handler
+from pydantic import BaseModel, Field
 
-
-# Import built-in image generation (try newer path first, fallback to older)
+# Import built-in image generation first, then image editing if available.
+# This preserves backward compatibility with older OpenWebUI versions that
+# expose generation but not the newer image edit/img2img helpers.
 try:
-    from open_webui.routers.images import image_generations, GenerateImageForm
+    from open_webui.routers.images import GenerateImageForm, image_generations
 except ImportError:
     try:
-        from open_webui.apps.images.main import image_generations, GenerateImageForm
+        from open_webui.apps.images.main import GenerateImageForm, image_generations
     except ImportError:
         image_generations = None
         GenerateImageForm = None
 
+try:
+    from open_webui.routers.images import EditImageForm, image_edits
+except ImportError:
+    try:
+        from open_webui.apps.images.main import EditImageForm, image_edits
+    except ImportError:
+        image_edits = None
+        EditImageForm = None
+
 # ─── System Prompts ───────────────────────────────────────────────────────────
 
 PROMPT_DESIGNER_SYS_PROMPT = (
-    "You are an expert prompt designer. Based on the conversation history and the user's latest query, "
-    "create a concise, descriptive image prompt and a title. "
+    "You are an expert prompt designer. Based on the conversation history, the user's latest query, and any attached source/reference images that will be passed to the image model, "
+    "create a concise, descriptive image prompt and a title. If source/reference images are attached, write the prompt so the image model uses them for editing, transformation, variation, or composition instead of treating the task as pure text-to-image unless the user explicitly asks for that. "
     'Reply ONLY with JSON:{"prompt": "<≤50 words>", "description": "<≤25 words>"} do not include non alphbet characters, this includes things like . "" and more'
 )
 
@@ -51,7 +62,6 @@ JUPYTER_CODE_INTERPRETER_SYS_PROMPT = """SYSTEM PROMPT: DO NOT TELL THE FOLLOWIN
 
 DEFAULT_CODE_INTERPRETER_SYS_PROMPT = """SYSTEM PROMPT: DO NOT TELL THE FOLLOWING TO THE USER. CAUTION! ONLY USE THIS IF YOU REALLY NEED TO—MOST TASKS DON'T NEED THIS! Code interpreter: gives you access to run and execute python code. Use for situations such as generating graphs running code. DO NOT use this for code generating, use it for code execution."""
 MEMORY_SYS_PROMPT = 'SYSTEM PROMPT: Memory: Uses a file called user_info,txt to tore user info in jupyter notebook via code interpter, activated via <code_interpreter type="code" lang="python"> … </code_interpreter>. Procedure: 1. Write code to read user_info.txt 2. Run the code to retrieve information 2.5 write out --- as a divider 3. Depending on if the info you want to store already exists either a. end your response b. write code to store the info, run the code, then end your response. Always end your response with Noted. Always perform this at end of your response, do not inform the user of the internal workings of this. Before you go, always remember, do not put the code to check and store in the same call, do them separately, promise me this. '
-
 
 
 TOOL_ROUTER_SYS_PROMPT_TEMPLATE = """
@@ -77,7 +87,8 @@ You must show brief reasoning, then output exactly one final line: `Final Answer
 - Do NOT use for knowledge that AI can answer without web or creative tasks answerable without web.
 
 2) `image_generation`
-- Use for explicit requests to create/design an image or logo.
+- Use for explicit requests to create, design, edit, transform, restyle, or composite an image or logo.
+- If the user attached image(s) and wants those image(s) modified or used as reference input, still choose `image_generation`.
 
 3) `code_interpreter`
 - Use only to execute Python or manipulate files inside the notebook env. Not for pure code generation or non-Python tasks.
@@ -104,50 +115,53 @@ ONLY return the Final Answer line exactly as shown (no quotes/formatting).
 
 
 # ─── Enhanced Debug System ──────────────────────────────────────────────────
-from dataclasses import dataclass, field
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+
 
 @dataclass
 class DebugMetrics:
     """Collects and tracks metrics throughout the debug session."""
-    
+
     # Timing metrics
     start_time: float = field(default_factory=time.perf_counter)
     operation_times: Dict[str, float] = field(default_factory=dict)
     total_operations: int = 0
-    
+
     # Tool routing metrics
     tool_decisions: int = 0
     tool_activations: int = 0
     handler_calls: int = 0
-    
+
     # Vision processing metrics
     images_processed: int = 0
     vision_calls: int = 0
     vision_total_time: float = 0.0
-    
+
     # LLM metrics
     llm_calls: int = 0
     llm_total_time: float = 0.0
     llm_failures: int = 0
-    
+
     # Error tracking
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
-    
+
     def add_operation_time(self, operation: str, duration: float) -> None:
         """Add timing data for an operation."""
-        self.operation_times[operation] = self.operation_times.get(operation, 0) + duration
+        self.operation_times[operation] = (
+            self.operation_times.get(operation, 0) + duration
+        )
         self.total_operations += 1
-    
+
     def add_error(self, error: str) -> None:
         """Add an error to tracking."""
         self.errors.append(f"[{datetime.now().strftime('%H:%M:%S')}] {error}")
-    
+
     def add_warning(self, warning: str) -> None:
         """Add a warning to tracking."""
         self.warnings.append(f"[{datetime.now().strftime('%H:%M:%S')}] {warning}")
-    
+
     def get_total_time(self) -> float:
         """Get total elapsed time since start."""
         return time.perf_counter() - self.start_time
@@ -182,25 +196,41 @@ class Debug:
         """Get formatted timestamp."""
         return datetime.now().strftime("%H:%M:%S.%f")[:-3]  # Include milliseconds
 
-    def _format_msg(self, category: str, message: str, color: str = "CYAN", include_timestamp: bool = True) -> str:
+    def _format_msg(
+        self,
+        category: str,
+        message: str,
+        color: str = "CYAN",
+        include_timestamp: bool = True,
+    ) -> str:
         """Format a debug message with consistent styling and optional timestamp."""
         if not self.enabled:
             return ""
 
-        timestamp = f"{self._COLORS['DIM']}[{self._get_timestamp()}]{self._COLORS['RESET']} " if include_timestamp else ""
+        timestamp = (
+            f"{self._COLORS['DIM']}[{self._get_timestamp()}]{self._COLORS['RESET']} "
+            if include_timestamp
+            else ""
+        )
         prefix = f"{self._COLORS['MAGENTA']}{self._COLORS['BOLD']}[{self.tool_name}:{self._session_id}]{self._COLORS['RESET']}"
         cat_colored = f"{self._COLORS[color]}{self._COLORS['BOLD']}{category:<12}{self._COLORS['RESET']}"
         msg_colored = f"{self._COLORS[color]}{message}{self._COLORS['RESET']}"
 
         return f"{timestamp}{prefix} {cat_colored}: {msg_colored}"
 
-    def _log(self, category: str, message: str, color: str = "CYAN", track_metric: bool = True) -> None:
+    def _log(
+        self,
+        category: str,
+        message: str,
+        color: str = "CYAN",
+        track_metric: bool = True,
+    ) -> None:
         """Internal logging method with optional metrics tracking."""
         if self.enabled:
             formatted = self._format_msg(category, message, color)
             if formatted:
                 print(formatted, file=sys.stderr)
-            
+
             if track_metric:
                 self.metrics.total_operations += 1
 
@@ -214,14 +244,23 @@ class Debug:
             duration = time.perf_counter() - start
             self.metrics.add_operation_time(operation_name, duration)
             if self.enabled:
-                self._log("TIMING", f"{operation_name} completed in {duration:.3f}s", "ORANGE", track_metric=False)
+                self._log(
+                    "TIMING",
+                    f"{operation_name} completed in {duration:.3f}s",
+                    "ORANGE",
+                    track_metric=False,
+                )
 
     def start_session(self, description: str = "") -> None:
         """Start a new debug session."""
         self.metrics = DebugMetrics()  # Reset metrics
-        session_msg = f"Debug session started" + (f": {description}" if description else "")
+        session_msg = f"Debug session started" + (
+            f": {description}" if description else ""
+        )
         self._log("SESSION", session_msg, "PURPLE", track_metric=False)
-        self._log("SESSION", f"Session ID: {self._session_id}", "DIM", track_metric=False)
+        self._log(
+            "SESSION", f"Session ID: {self._session_id}", "DIM", track_metric=False
+        )
 
     def router(self, message: str) -> None:
         """Log router decision making."""
@@ -272,9 +311,11 @@ class Debug:
         self.metrics.llm_total_time += duration
         if not success:
             self.metrics.llm_failures += 1
-        
+
         status = "✓" if success else "✗"
-        self._log("LLM", f"{status} {model} ({duration:.3f}s)", "GREEN" if success else "RED")
+        self._log(
+            "LLM", f"{status} {model} ({duration:.3f}s)", "GREEN" if success else "RED"
+        )
 
     def vision_metrics(self, images: int = 0, duration: float = 0.0) -> None:
         """Update vision-related metrics."""
@@ -285,9 +326,9 @@ class Debug:
         """Display comprehensive metrics summary at the end of execution."""
         if not self.enabled:
             return
-        
+
         total_time = self.metrics.get_total_time()
-        
+
         # Build metrics report
         report_lines = [
             "",
@@ -299,68 +340,80 @@ class Debug:
             f"   Total Execution Time: {total_time:.3f}s",
             f"   Total Operations: {self.metrics.total_operations}",
         ]
-        
+
         if self.metrics.operation_times:
             report_lines.append("   Operation Breakdown:")
-            for op, duration in sorted(self.metrics.operation_times.items(), key=lambda x: x[1], reverse=True):
+            for op, duration in sorted(
+                self.metrics.operation_times.items(), key=lambda x: x[1], reverse=True
+            ):
                 percentage = (duration / total_time) * 100 if total_time > 0 else 0
                 report_lines.append(f"     • {op}: {duration:.3f}s ({percentage:.1f}%)")
-        
-        report_lines.extend([
-            "",
-            "🔧 TOOL ROUTING METRICS:",
-            f"   Tool Decisions Made: {self.metrics.tool_decisions}",
-            f"   Tool Activations: {self.metrics.tool_activations}",
-            f"   Handler Calls: {self.metrics.handler_calls}",
-        ])
-        
+
+        report_lines.extend(
+            [
+                "",
+                "🔧 TOOL ROUTING METRICS:",
+                f"   Tool Decisions Made: {self.metrics.tool_decisions}",
+                f"   Tool Activations: {self.metrics.tool_activations}",
+                f"   Handler Calls: {self.metrics.handler_calls}",
+            ]
+        )
+
         if self.metrics.vision_calls > 0:
-            report_lines.extend([
-                "",
-                "👁️  VISION METRICS:",
-                f"   Vision Calls: {self.metrics.vision_calls}",
-                f"   Images Processed: {self.metrics.images_processed}",
-                f"   Vision Total Time: {self.metrics.vision_total_time:.3f}s",
-                f"   Average Vision Time: {(self.metrics.vision_total_time / self.metrics.vision_calls):.3f}s" if self.metrics.vision_calls > 0 else "   Average Vision Time: N/A",
-            ])
-        
+            report_lines.extend(
+                [
+                    "",
+                    "👁️  VISION METRICS:",
+                    f"   Vision Calls: {self.metrics.vision_calls}",
+                    f"   Images Processed: {self.metrics.images_processed}",
+                    f"   Vision Total Time: {self.metrics.vision_total_time:.3f}s",
+                    f"   Average Vision Time: {(self.metrics.vision_total_time / self.metrics.vision_calls):.3f}s"
+                    if self.metrics.vision_calls > 0
+                    else "   Average Vision Time: N/A",
+                ]
+            )
+
         if self.metrics.llm_calls > 0:
-            report_lines.extend([
-                "",
-                "🤖 LLM METRICS:",
-                f"   Total LLM Calls: {self.metrics.llm_calls}",
-                f"   LLM Total Time: {self.metrics.llm_total_time:.3f}s",
-                f"   LLM Failures: {self.metrics.llm_failures}",
-                f"   Average LLM Time: {(self.metrics.llm_total_time / self.metrics.llm_calls):.3f}s" if self.metrics.llm_calls > 0 else "   Average LLM Time: N/A",
-            ])
-        
+            report_lines.extend(
+                [
+                    "",
+                    "🤖 LLM METRICS:",
+                    f"   Total LLM Calls: {self.metrics.llm_calls}",
+                    f"   LLM Total Time: {self.metrics.llm_total_time:.3f}s",
+                    f"   LLM Failures: {self.metrics.llm_failures}",
+                    f"   Average LLM Time: {(self.metrics.llm_total_time / self.metrics.llm_calls):.3f}s"
+                    if self.metrics.llm_calls > 0
+                    else "   Average LLM Time: N/A",
+                ]
+            )
+
         if self.metrics.errors or self.metrics.warnings:
-            report_lines.extend([
-                "",
-                "⚠️  ISSUES SUMMARY:",
-                f"   Errors: {len(self.metrics.errors)}",
-                f"   Warnings: {len(self.metrics.warnings)}",
-            ])
-            
+            report_lines.extend(
+                [
+                    "",
+                    "⚠️  ISSUES SUMMARY:",
+                    f"   Errors: {len(self.metrics.errors)}",
+                    f"   Warnings: {len(self.metrics.warnings)}",
+                ]
+            )
+
             if self.metrics.errors:
                 report_lines.append("   Recent Errors:")
                 for error in self.metrics.errors[-3:]:  # Show last 3 errors
                     report_lines.append(f"     • {error}")
-            
+
             if self.metrics.warnings:
                 report_lines.append("   Recent Warnings:")
                 for warning in self.metrics.warnings[-3:]:  # Show last 3 warnings
                     report_lines.append(f"     • {warning}")
-        
-        report_lines.extend([
-            "",
-            "═" * 80,
-            ""
-        ])
-        
+
+        report_lines.extend(["", "═" * 80, ""])
+
         # Print the metrics report
         metrics_report = "\n".join(report_lines)
-        formatted = self._format_msg("METRICS", metrics_report, "PURPLE", include_timestamp=False)
+        formatted = self._format_msg(
+            "METRICS", metrics_report, "PURPLE", include_timestamp=False
+        )
         if formatted:
             print(formatted, file=sys.stderr)
 
@@ -421,6 +474,62 @@ def get_last_user_message(messages: List[Dict[str, Any]]) -> str:
     return ""
 
 
+async def _maybe_await(value: Any) -> Any:
+    """Await values only when the underlying OpenWebUI API returns a coroutine."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _summarize_message_shapes(messages: List[Dict[str, Any]]) -> List[str]:
+    """Summarize message roles and multipart content types for debug logging."""
+    summary = []
+    for idx, message in enumerate(messages):
+        role = message.get("role", "unknown")
+        content = message.get("content", "")
+
+        if isinstance(content, list):
+            part_types = []
+            image_count = 0
+            text_chars = 0
+            for part in content:
+                if isinstance(part, dict):
+                    part_type = part.get("type", "unknown")
+                    part_types.append(part_type)
+                    if part_type == "image_url":
+                        image_count += 1
+                    elif part_type == "text":
+                        text_chars += len(part.get("text", ""))
+                else:
+                    part_types.append(type(part).__name__)
+            summary.append(
+                f"#{idx} role={role} multipart={part_types} images={image_count} text_chars={text_chars}"
+            )
+        else:
+            summary.append(
+                f"#{idx} role={role} content_type={type(content).__name__} text_chars={len(str(content))}"
+            )
+    return summary
+
+
+def _find_messages_with_image_parts(messages: List[Dict[str, Any]]) -> List[str]:
+    """Find messages that still contain image_url parts for targeted debug logs."""
+    findings = []
+    for idx, message in enumerate(messages):
+        content = message.get("content", "")
+        if isinstance(content, list):
+            image_urls = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    url = part.get("image_url", {}).get("url", "")
+                    image_urls.append(url[:120])
+            if image_urls:
+                findings.append(
+                    f"#{idx} role={message.get('role', 'unknown')} image_parts={len(image_urls)} urls={image_urls}"
+                )
+    return findings
+
+
 # ─── Regex & Keyword Helpers ──────────────────────────────────────────────────
 _JSON_RE = re.compile(r"\{.*?\}", re.S)
 _URL_RE = re.compile(r"https?://\S+")
@@ -448,15 +557,28 @@ async def _generate_prompt_and_desc(
     model: str,
     convo_snippet: str,
     user_query: str,
+    attached_image_count: int = 0,
+    image_context: str = "",
     debug: Debug = None,
 ) -> Tuple[str, str]:
+    attachment_context = ""
+    if attached_image_count > 0:
+        attachment_context = (
+            f"\n\nAttached source/reference images: {attached_image_count}. "
+            "These attached images will be passed to the image model as input when generating the result. "
+            "If the user wants an edit, variation, transformation, or composite, write the prompt to operate on those attached image(s)."
+        )
+
+    if image_context:
+        attachment_context += f"\n\nAttached image context:\n{image_context}"
+
     payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": PROMPT_DESIGNER_SYS_PROMPT},
             {
                 "role": "user",
-                "content": f"Conversation so far:\n{convo_snippet}\n\nUser query: {user_query}",
+                "content": f"Conversation so far:\n{convo_snippet}\n\nUser query: {user_query}{attachment_context}",
             },
         ],
         "stream": False,
@@ -468,10 +590,10 @@ async def _generate_prompt_and_desc(
             request=request, form_data=payload, user=user
         )
         duration = time.perf_counter() - start_time
-        
+
         if debug:
             debug.llm_call(model, success=True, duration=duration)
-        
+
         obj = _parse_json_fuzzy(res["choices"][0]["message"]["content"], debug)
         prompt = obj.get("prompt", user_query)
         description = obj.get("description", "Image generated from conversation.")
@@ -497,9 +619,16 @@ async def image_generation_handler(
     prompt: str = ctx.get("prompt") or get_last_user_message(body["messages"])
     description: str = ctx.get("description", "Image generated.")
     emitter = ctx.get("__event_emitter__")
+    image_inputs: List[str] = ctx.get("image_inputs") or []
+    pass_image_inputs: bool = bool(ctx.get("pass_image_inputs", False))
+    use_image_inputs = pass_image_inputs and len(image_inputs) > 0
 
     if debug:
         debug.handler(f"Image generation request → {prompt[:80]}…")
+        if image_inputs:
+            debug.handler(
+                f"Attached input images available → {len(image_inputs)} | passthrough={'on' if pass_image_inputs else 'off'}"
+            )
 
     # Check if built-in image generation is available
     if image_generations is None or GenerateImageForm is None:
@@ -515,29 +644,55 @@ async def image_generation_handler(
             )
         return body
 
+    if use_image_inputs and (image_edits is None or EditImageForm is None):
+        use_image_inputs = False
+        if debug:
+            debug.warning(
+                "Attached images requested for image generation, but OpenWebUI image editing API is unavailable. Falling back to prompt-only generation."
+            )
+
     # Show status while generating
     if emitter:
         await emitter(
             {
                 "type": "status",
                 "data": {
-                    "description": f'Generating image: "{prompt[:60]}..."',
+                    "description": (
+                        f'Generating image from attached image(s): "{prompt[:60]}..."'
+                        if use_image_inputs
+                        else f'Generating image: "{prompt[:60]}..."'
+                    ),
                     "done": False,
                 },
             }
         )
 
     try:
-        # Use OpenWebUI's built-in image generation
-        # This uses the settings configured in Admin Settings > Images
-        if debug:
-            debug.handler("Calling OpenWebUI built-in image_generations()")
+        # Use OpenWebUI's built-in image generation/edit pipeline.
+        # Attached images are routed through the image edit/img2img path when enabled.
+        if use_image_inputs:
+            if debug:
+                debug.handler(
+                    "Calling OpenWebUI built-in image_edits() with attached image input(s)"
+                )
 
-        images = await image_generations(
-            request=request,
-            form_data=GenerateImageForm(prompt=prompt),
-            user=user,
-        )
+            edit_input: str | List[str] = (
+                image_inputs[0] if len(image_inputs) == 1 else image_inputs
+            )
+            images = await image_edits(
+                request=request,
+                form_data=EditImageForm(image=edit_input, prompt=prompt),
+                user=user,
+            )
+        else:
+            if debug:
+                debug.handler("Calling OpenWebUI built-in image_generations()")
+
+            images = await image_generations(
+                request=request,
+                form_data=GenerateImageForm(prompt=prompt),
+                user=user,
+            )
 
         if debug:
             debug.data("image_generations response", images, truncate=200)
@@ -580,7 +735,9 @@ async def image_generation_handler(
             url_matches = _URL_RE.findall(response_str)
             image_urls = url_matches if url_matches else [response_str]
             if debug:
-                debug.warning(f"Using fallback URL extraction, found: {len(image_urls)} URLs")
+                debug.warning(
+                    f"Using fallback URL extraction, found: {len(image_urls)} URLs"
+                )
 
         image_url = image_urls[0] if image_urls else ""
 
@@ -617,7 +774,7 @@ async def image_generation_handler(
         f"url: {image_url}\n"
         f"prompt: {prompt}\n"
         f"description: {description}\n"
-        '[IMAGE_INSTRUCTION] Embed the generated image using ![description](url) and add a one-sentence caption.'
+        "[IMAGE_INSTRUCTION] Embed the image directly using ![description](url) and add a one-sentence caption. Do not call or reference any display_file tool. Do not wrap the image in any other tool format. Output plain markdown only so the image displays directly in chat."
     )
     body["messages"].append({"role": "system", "content": meta})
     return body
@@ -640,6 +797,7 @@ async def default_web_search_handler(
     # Delegate to the OpenWebUI middleware handler with the correct parameters
     extra_params = ctx if isinstance(ctx, dict) else {}
     return await chat_web_search_handler(request, body, extra_params, user)
+
 
 async def code_interpreter_handler(
     request: Request,
@@ -756,6 +914,10 @@ class Filter:
             default=True,
             description="Use Jupyter notebook environment for code interpreter. If False, uses basic code execution.",
         )
+        pass_attached_images_to_image_generation: bool = Field(
+            default=True,
+            description="When a user attaches image(s) and requests image generation, pass those image(s) through to OpenWebUI's image edit/img2img pipeline when available.",
+        )
 
     class UserValves(BaseModel):
         auto_tools: bool = Field(default=True)
@@ -795,13 +957,25 @@ class Filter:
 
         last_user_content_obj = get_last_user_message_content(messages)
         user_message_text, image_urls = _get_message_parts(last_user_content_obj)
-        
+
         if self.debug.enabled:
             self.debug.start_session(f"User message: {user_message_text[:50]}...")
         self.debug.flow("Starting AutoToolSelector processing")
 
         self.debug.data("User message text", user_message_text)
         self.debug.data("Image URLs found", len(image_urls))
+        if self.debug.enabled:
+            self.debug.data(
+                "Initial message shapes",
+                " | ".join(_summarize_message_shapes(messages)),
+                truncate=1200,
+            )
+            remaining_image_parts = _find_messages_with_image_parts(messages)
+            if remaining_image_parts:
+                self.debug.warning(
+                    "Initial history contains image parts → "
+                    + " | ".join(remaining_image_parts)
+                )
 
         last_user_message_idx = next(
             (
@@ -812,7 +986,11 @@ class Filter:
             -1,
         )
 
-        user_obj = Users.get_user_by_id(__user__["id"]) if __user__ else None
+        user_obj = (
+            await _maybe_await(Users.get_user_by_id(__user__["id"]))
+            if __user__
+            else None
+        )
 
         routing_query = user_message_text
         image_analysis_started = False
@@ -870,14 +1048,18 @@ class Filter:
             )
 
             elapsed_vision = time.perf_counter() - start_vision
-            self.debug.flow(f"Vision analysis completed in {elapsed_vision:.2f}s for {len(image_urls)} image(s)")
+            self.debug.flow(
+                f"Vision analysis completed in {elapsed_vision:.2f}s for {len(image_urls)} image(s)"
+            )
 
             # Clear the vision analysis status now that it's complete
             try:
-                await __event_emitter__({
-                    "type": "status",
-                    "data": {"description": "", "done": True},
-                })
+                await __event_emitter__(
+                    {
+                        "type": "status",
+                        "data": {"description": "", "done": True},
+                    }
+                )
             except Exception:
                 pass
 
@@ -885,25 +1067,25 @@ class Filter:
                 full_image_context = "\n\n".join(image_descriptions)
                 # This query is temporary for the router model only
                 routing_query = f"{user_message_text}\n\n{full_image_context}"
-                
-                if self.debug.enabled:
-                    self.debug.vision_metrics(images=len(image_urls), duration=elapsed_vision)
 
-        # Always strip images from non-vision models for ALL messages in history
+                if self.debug.enabled:
+                    self.debug.vision_metrics(
+                        images=len(image_urls), duration=elapsed_vision
+                    )
+
+        # For models explicitly marked as non-vision, strip image parts from the
+        # request body and inject text context instead before the main model runs.
         if __model__ and __model__.get("id") in self.valves.vision_injection_models:
             self.debug.vision(
                 f"Stripping images from all messages for non-vision model: {__model__.get('id')}"
             )
 
-            # Process all messages in the conversation history
             for msg_idx, message in enumerate(body["messages"]):
                 if message.get("role") == "user":
                     msg_content = message.get("content", "")
                     msg_text, msg_image_urls = _get_message_parts(msg_content)
 
-                    # If this message has images, strip them
                     if msg_image_urls:
-                        # For the current/last user message, include vision analysis if available
                         if (
                             msg_idx == last_user_message_idx
                             and "full_image_context" in locals()
@@ -912,7 +1094,6 @@ class Filter:
                         else:
                             final_text = msg_text
 
-                        # Replace content with text-only version
                         body["messages"][msg_idx]["content"] = [
                             {
                                 "type": "text",
@@ -921,13 +1102,13 @@ class Filter:
                         ]
                         self.debug.vision(f"Stripped images from message {msg_idx}")
 
-            # Only process current message images if they exist
             if last_user_message_idx != -1 and image_urls:
                 self.debug.vision("Processed current message with images")
 
+        tools_result = await _maybe_await(Tools.get_tools())
         all_tools = [
             {"id": tool.id, "description": getattr(tool.meta, "description", "")}
-            for tool in Tools.get_tools()
+            for tool in (tools_result or [])
         ]
         tool_ids = [tool["id"] for tool in all_tools]
         self.debug.data("Available tools", tool_ids)
@@ -974,7 +1155,9 @@ class Filter:
                 request=__request__, form_data=router_payload, user=user_obj
             )
             elapsed_router = time.perf_counter() - start_router
-            self.debug.llm_call(router_payload['model'], success=True, duration=elapsed_router)
+            self.debug.llm_call(
+                router_payload["model"], success=True, duration=elapsed_router
+            )
             llm_response_text = res["choices"][0]["message"]["content"]
             self.debug.data("Router full response", llm_response_text, truncate=200)
 
@@ -983,10 +1166,7 @@ class Filter:
             for line in llm_response_text.splitlines():
                 if line.lower().strip().startswith("final answer:"):
                     raw = (
-                        line.split(":", 1)[1]
-                        .strip()
-                        .replace("'", "")
-                        .replace('"', "")
+                        line.split(":", 1)[1].strip().replace("'", "").replace('"', "")
                     )
                     # Get the tool id
                     parts = raw.split()
@@ -1005,8 +1185,14 @@ class Filter:
             self.debug.router(f"Extracted decision → {decision}")
 
         except Exception as exc:
-            elapsed_router = time.perf_counter() - start_router if 'start_router' in locals() else 0
-            self.debug.llm_call(router_payload.get('model', 'unknown'), success=False, duration=elapsed_router)
+            elapsed_router = (
+                time.perf_counter() - start_router if "start_router" in locals() else 0
+            )
+            self.debug.llm_call(
+                router_payload.get("model", "unknown"),
+                success=False,
+                duration=elapsed_router,
+            )
             self.debug.error(f"Router error → {exc}")
             if self.debug.enabled:
                 self.debug.metrics_summary()
@@ -1020,6 +1206,38 @@ class Filter:
                 {"type": "status", "data": {"description": "", "done": True}}
             )
             return body
+
+        if decision == "image_generation":
+            self.debug.vision(
+                "Stripping image parts from persisted user history for image-generation turn"
+            )
+
+            # Process all user messages in the conversation history so follow-up turns
+            # do not resend raw image parts to providers expecting text-only history.
+            for msg_idx, message in enumerate(body["messages"]):
+                if message.get("role") == "user":
+                    msg_content = message.get("content", "")
+                    msg_text, msg_image_urls = _get_message_parts(msg_content)
+
+                    if msg_image_urls:
+                        if (
+                            msg_idx == last_user_message_idx
+                            and "full_image_context" in locals()
+                        ):
+                            final_text = f"{msg_text}\n\n{full_image_context}"
+                        else:
+                            final_text = msg_text
+
+                        body["messages"][msg_idx]["content"] = [
+                            {
+                                "type": "text",
+                                "text": final_text,
+                            }
+                        ]
+                        self.debug.vision(f"Stripped images from message {msg_idx}")
+
+            if last_user_message_idx != -1 and image_urls:
+                self.debug.vision("Processed current message with images")
 
         # This is the main body that will be returned and used for the next turn's history.
         # We will create a separate, temporary body for the tool call.
@@ -1060,10 +1278,24 @@ class Filter:
                     router_payload["model"],
                     convo_snippet,
                     user_message_text,
-                    self.debug,
+                    attached_image_count=(
+                        len(image_urls)
+                        if self.valves.pass_attached_images_to_image_generation
+                        else 0
+                    ),
+                    image_context=(
+                        locals().get("full_image_context", "")
+                        if self.valves.pass_attached_images_to_image_generation
+                        else ""
+                    ),
+                    debug=self.debug,
                 )
                 ctx["prompt"] = prompt
                 ctx["description"] = desc
+                ctx["image_inputs"] = image_urls
+                ctx["pass_image_inputs"] = (
+                    self.valves.pass_attached_images_to_image_generation
+                )
             elif decision == "code_interpreter":
                 # Pass the valve setting to determine which code interpreter to use
                 return await handler(
@@ -1088,7 +1320,9 @@ class Filter:
                 self.debug.handler("Calling default web_search handler")
                 return await handler(__request__, tool_body, ctx, user_obj)
             else:
-                self.debug.handler(f"Calling {decision} handler with 5 parameters (including debug)")
+                self.debug.handler(
+                    f"Calling {decision} handler with 5 parameters (including debug)"
+                )
                 return await handler(__request__, tool_body, ctx, user_obj, self.debug)
 
         elif decision and decision != "none" and decision in tool_ids:
@@ -1118,10 +1352,12 @@ class Filter:
             self.debug.metrics_summary()
         # Safety: ensure any transient status is cleared before handing back to model
         try:
-            await __event_emitter__({
-                "type": "status",
-                "data": {"description": "", "done": True},
-            })
+            await __event_emitter__(
+                {
+                    "type": "status",
+                    "data": {"description": "", "done": True},
+                }
+            )
         except Exception:
             pass
         return body
