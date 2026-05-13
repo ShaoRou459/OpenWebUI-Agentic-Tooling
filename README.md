@@ -83,8 +83,8 @@ docker restart open-webui
 
 | Setting | Purpose | Recommendation |
 |---------|---------|----------------|
-| `helper_model` | Decides which tool to use for queries | GPT-4o-mini, o4-mini, Gemini 2.5 Flash |
-| `vision_model` | Analyzes images for non-vision models | GPT-4o, o3, Gemini 2.5 Pro |
+| `helper_model` | Decides which tool to use for queries | GPT-5.4 mini, Gemini 3.1 Flash-Lite, or local Qwen 3.5 |
+| `vision_model` | Analyzes images for non-vision models | GPT-5.5, GPT-5.4 Pro, Gemini 3.1 Pro |
 | `vision_injection_models` | List of non-vision models to enhance | Add your model IDs (comma-separated) |
 | `use_exa_agentic_search` | Enable agentic Exa search vs native search | `true` (if Exa tool is installed) |
 | `debug_enabled` | Enable detailed debug logging | `false` (enable for troubleshooting) |
@@ -96,7 +96,7 @@ docker restart open-webui
 | Setting | Purpose | Recommendation |
 |---------|---------|----------------|
 | `exa_api_key` | **Required**: Your Exa.ai API key | Get yours at [exa.ai](https://exa.ai) |
-| `agent_model` | LLM for agentic search (evaluation, query generation) | GPT-4o-mini, o4-mini, Gemini 2.5 Flash |
+| `agent_model` | LLM for agentic search (evaluation, query generation) | GPT-5.4 Thinking, Gemini 3.1 Pro, or local DeepSeek |
 | `max_iterations` | Maximum search iterations before returning | 3 (default) |
 | `debug_enabled` | Enable search operation debugging | `false` (enable for troubleshooting) |
 | `show_sources` | Display source citations in UI | `false` (optional) |
